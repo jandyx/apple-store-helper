@@ -39,11 +39,14 @@ func main() {
 	barkWidget.SetPlaceHolder("https://api.day.app/你的BarkKey")
 
 	// 查询频率选择器 (Polling Interval Selector)
-	intervalWidget := widget.NewSelect(services.IntervalLabels(), func(value string) {
-		if value == "" {
+	// 可从下拉选择，也可直接输入秒数（如 1.5）或毫秒（如 800ms）
+	intervalWidget := widget.NewSelectEntry(services.IntervalLabels())
+	intervalWidget.SetPlaceHolder("选择或输入秒数，如 1.5")
+	intervalWidget.OnChanged = func(value string) {
+		ms, ok := services.ParseInterval(value)
+		if !ok {
 			return
 		}
-		ms := services.ParseIntervalLabel(value)
 		services.Listen.IntervalMs.Set(ms)
 
 		// 已有配置文件时立即落盘；没有时等“添加”一起保存，避免生成只含频率的配置导致地区为空
@@ -52,8 +55,7 @@ func main() {
 			settings.ListenInterval = 0
 			services.SaveSettings(settings)
 		}
-	})
-	intervalWidget.PlaceHolder = "选择查询频率"
+	}
 
 	// 地区选择器 (Area Selector)
 	areaWidget := widget.NewRadioGroup(services.Area.ForOptions(), func(value string) {
@@ -120,7 +122,7 @@ func initFyneApp() {
 }
 
 // 加载用户设置缓存 (Load user settings cache)
-func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *widget.Select, productWidget *widget.Select, barkNotifyWidget *widget.Entry, intervalWidget *widget.Select) {
+func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *widget.Select, productWidget *widget.Select, barkNotifyWidget *widget.Entry, intervalWidget *widget.SelectEntry) {
 	settings, err := services.LoadSettings()
 
 	interval := services.DefaultIntervalMs
@@ -128,7 +130,7 @@ func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *widget.Se
 		interval = settings.IntervalMs()
 	}
 	services.Listen.IntervalMs.Set(interval)
-	intervalWidget.SetSelected(services.IntervalLabel(interval))
+	intervalWidget.SetText(services.IntervalLabel(interval))
 
 	if err == nil {
 		areaWidget.SetSelected(settings.SelectedArea)
@@ -142,7 +144,7 @@ func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *widget.Se
 }
 
 // 创建动作按钮 (Create action buttons)
-func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *widget.Select, productWidget *widget.Select, barkNotifyWidget *widget.Entry, intervalWidget *widget.Select) *fyne.Container {
+func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *widget.Select, productWidget *widget.Select, barkNotifyWidget *widget.Entry, intervalWidget *widget.SelectEntry) *fyne.Container {
 	return container.NewHBox(
 		widget.NewButton("添加", func() {
 			if storeWidget.Selected == "" || productWidget.Selected == "" {
@@ -154,7 +156,7 @@ func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *widget.Sele
 					SelectedStore:    storeWidget.Selected,
 					SelectedProduct:  productWidget.Selected,
 					BarkNotifyUrl:    barkNotifyWidget.Text,
-					ListenIntervalMs: services.ParseIntervalLabel(intervalWidget.Selected),
+					ListenIntervalMs: services.ParseIntervalLabel(intervalWidget.Text),
 					ListenItems:      services.Listen.GetListenItems(),
 				})
 			}

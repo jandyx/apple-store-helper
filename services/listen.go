@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -35,7 +36,9 @@ const (
 	Running = "监听中"
 
 	DefaultIntervalMs = 3000
-	blockedBackoff    = 5 * time.Second
+	// MinIntervalMs 自定义间隔下限，避免请求过密被风控
+	MinIntervalMs  = 300
+	blockedBackoff = 5 * time.Second
 	// 暂停或无监听项时用短间隔检查状态，保证点击“开始”后立即生效
 	idleInterval = 200 * time.Millisecond
 )
@@ -64,12 +67,42 @@ func IntervalLabels() []string {
 	return labels
 }
 
-// ParseIntervalLabel 下拉框文案转毫秒数，无法识别时回退默认值
-func ParseIntervalLabel(label string) int {
+var intervalNumberRe = regexp.MustCompile(`\d+(\.\d+)?`)
+
+// ParseInterval 解析下拉框文案或自定义输入，如 "1.5"、"1.5 秒"、"800ms"、"800 毫秒"；
+// 默认单位为秒，低于 MinIntervalMs 时取下限
+func ParseInterval(text string) (int, bool) {
+	text = strings.TrimSpace(text)
 	for _, ms := range IntervalOptions {
-		if IntervalLabel(ms) == label {
-			return ms
+		if IntervalLabel(ms) == text {
+			return ms, true
 		}
+	}
+
+	number := intervalNumberRe.FindString(text)
+	if number == "" {
+		return 0, false
+	}
+	value, err := strconv.ParseFloat(number, 64)
+	if err != nil {
+		return 0, false
+	}
+
+	lower := strings.ToLower(text)
+	ms := int(value * 1000)
+	if strings.Contains(lower, "ms") || strings.Contains(text, "毫秒") {
+		ms = int(value)
+	}
+	if ms < MinIntervalMs {
+		ms = MinIntervalMs
+	}
+	return ms, true
+}
+
+// ParseIntervalLabel 同 ParseInterval，无法识别时回退默认值
+func ParseIntervalLabel(label string) int {
+	if ms, ok := ParseInterval(label); ok {
+		return ms
 	}
 	return DefaultIntervalMs
 }
