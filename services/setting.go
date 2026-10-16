@@ -30,7 +30,8 @@ type UserSettings struct {
 	SelectedStores   []string              `json:"selected_stores"`
 	SelectedProduct  string                `json:"selected_product"` // 旧版单选字段，仅用于读取兼容
 	SelectedProducts []string              `json:"selected_products"`
-	BarkNotifyUrl    string                `json:"bark_notify_url"`
+	BarkNotifyUrl    string                `json:"bark_notify_url"` // 旧版字段，仅用于读取兼容
+	PushUrls         string                `json:"push_urls"`
 	ListenInterval   int                   `json:"listen_interval"` // 旧版字段（秒），仅用于读取兼容
 	ListenIntervalMs int                   `json:"listen_interval_ms"`
 	ListenItems      map[string]ListenItem `json:"listen_items"`
@@ -80,6 +81,14 @@ func (s UserSettings) Products() []string {
 		return []string{s.SelectedProduct}
 	}
 	return nil
+}
+
+// Pushes 手机推送地址，兼容旧版只填 Bark 的配置
+func (s UserSettings) Pushes() string {
+	if s.PushUrls != "" {
+		return s.PushUrls
+	}
+	return s.BarkNotifyUrl
 }
 
 // IntervalMs 查询间隔（毫秒），兼容旧版按秒保存的 listen_interval

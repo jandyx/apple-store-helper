@@ -2,11 +2,9 @@ package services
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
-	"net/http"
 	"net/url"
 	"regexp"
 	"sort"
@@ -126,13 +124,14 @@ var Listen = listenService{
 
 type listenService struct {
 	// mu 保护 items：界面线程（添加 / 清空）与监听协程会同时读写
-	mu            sync.Mutex
-	items         map[string]ListenItem
-	Status        binding.String
-	Area          model.Area
-	Logs          *widget.Label
-	BarkNotifyUrl string
-	IntervalMs    binding.Int
+	mu     sync.Mutex
+	items  map[string]ListenItem
+	Status binding.String
+	Area   model.Area
+	Logs   *widget.Label
+	// PushUrls 手机推送地址，每行一个，渠道按域名自动识别
+	PushUrls   string
+	IntervalMs binding.Int
 }
 
 type ListenItem struct {
@@ -142,7 +141,7 @@ type ListenItem struct {
 	Time    carbon.DateTime
 }
 
-func (s *listenService) Add(areaTitle string, storeTitle string, productTitle string, barkNotifyUrl string) {
+func (s *listenService) Add(areaTitle string, storeTitle string, productTitle string) {
 
 	store := Store.GetStore(areaTitle, storeTitle)
 	product := Product.GetProduct(areaTitle, productTitle)
@@ -160,7 +159,6 @@ func (s *listenService) Add(areaTitle string, storeTitle string, productTitle st
 		}
 	}
 
-	s.BarkNotifyUrl = barkNotifyUrl
 	s.updateLogStrLocked()
 }
 
@@ -333,7 +331,7 @@ func (s *listenService) alertInStock(hits []string) {
 	dialog.ShowInformation("匹配成功", msg, view.Window)
 	notify.Send(title, msg)
 	go s.AlertMp3()
-	go s.SendPushNotificationByBark(title, msg, bagUrl)
+	go s.SendPush(title, msg, bagUrl)
 }
 
 func (s *listenService) groupByStore(items map[string]ListenItem) skuFetch {
@@ -559,32 +557,13 @@ func (s *listenService) AlertMp3() {
 	<-done
 }
 
-func (s *listenService) SendPushNotificationByBark(title string, content string, bagUrl string) error {
-
-	if len(s.BarkNotifyUrl) <= 0 {
-		return errors.New("未填写 Bark 通知地址")
+// SendPush 推送到所有已配置的手机推送地址。失败只记日志，不影响弹窗、提示音和打开购物车
+func (s *listenService) SendPush(title string, content string, link string) []PushResult {
+	results := Push(s.PushUrls, PushMessage{Title: title, Content: content, URL: link})
+	for _, r := range results {
+		if r.Err != nil {
+			log.Printf("推送失败 [%s] %s: %v", r.Channel, MaskTarget(r.Target), r.Err)
+		}
 	}
-
-	apiUrl := fmt.Sprintf(
-		"%s/%s/%s?url=%s",
-		strings.TrimRight(s.BarkNotifyUrl, "/"),
-		url.PathEscape(title),
-		url.PathEscape(content),
-		url.QueryEscape(bagUrl),
-	)
-
-	// 推送失败只记录日志，不能影响有货后的弹窗、提示音和打开购物袋
-	client := http.Client{Timeout: 10 * time.Second}
-	response, err := client.Get(apiUrl)
-	if err != nil {
-		log.Println("bark notify failed", err)
-		return err
-	}
-	defer response.Body.Close()
-
-	if response.StatusCode != http.StatusOK {
-		log.Println("bark notify status", response.StatusCode)
-		return fmt.Errorf("Bark 返回状态码 %d", response.StatusCode)
-	}
-	return nil
+	return results
 }

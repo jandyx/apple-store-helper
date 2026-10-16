@@ -8,6 +8,7 @@ import (
 	"apple-store-helper/view"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -19,9 +20,6 @@ import (
 	"github.com/faiface/beep"
 	"github.com/faiface/beep/speaker"
 )
-
-// barkEnabled Bark 推送开关。官方服务 api.day.app 当前不可用，先隐藏相关界面，恢复后改为 true 即可
-const barkEnabled = false
 
 // main 主函数 (Main function)
 func main() {
@@ -38,9 +36,18 @@ func main() {
 	// 型号选择器 (Product Selector)
 	productWidget := newMultiPicker("选择型号", "请选择 iPhone 型号（可多选）", "个", services.Product.ByAreaTitleForOptions(defaultArea))
 
-	// Bark 通知输入框
-	barkWidget := widget.NewEntry()
-	barkWidget.SetPlaceHolder("https://api.day.app/你的BarkKey")
+	// 手机推送地址，每行一个，按域名自动识别渠道
+	pushWidget := widget.NewMultiLineEntry()
+	pushWidget.SetMinRowsVisible(2)
+	pushWidget.SetPlaceHolder("选填，每行一个：Bark / Server酱 / 企业微信机器人 / Telegram / Webhook 地址")
+	pushWidget.OnChanged = func(value string) {
+		services.Listen.PushUrls = value
+		if settings, err := services.LoadSettings(); err == nil && settings.Pushes() != value {
+			settings.PushUrls = value
+			settings.BarkNotifyUrl = ""
+			services.SaveSettings(settings)
+		}
+	}
 
 	// 查询频率选择器 (Polling Interval Selector)
 	// 可从下拉选择，也可直接输入秒数（如 1.5）或毫秒（如 800ms）
@@ -83,7 +90,7 @@ func main() {
 3. 点击“开始”按钮开始监听，检测到有货时会自动打开购物车页面
 `
 
-	loadUserSettingsCache(areaWidget, storeWidget, productWidget, barkWidget, intervalWidget)
+	loadUserSettingsCache(areaWidget, storeWidget, productWidget, pushWidget, intervalWidget)
 
 	// 表单放在同一个 FormLayout 里，标签列宽度一致
 	formItems := []fyne.CanvasObject{
@@ -91,16 +98,16 @@ func main() {
 		widget.NewLabel("选择门店:"), storeWidget.Widget(),
 		widget.NewLabel("选择型号:"), productWidget.Widget(),
 	}
-	if barkEnabled {
-		formItems = append(formItems, widget.NewLabel("Bark 通知地址:"), barkWidget)
-	}
-	formItems = append(formItems, widget.NewLabel("查询频率:"), intervalWidget)
+	formItems = append(formItems,
+		widget.NewLabel("查询频率:"), intervalWidget,
+		widget.NewLabel("手机推送:"), pushWidget,
+	)
 
 	top := container.NewVBox(
 		widget.NewLabel(help),
 		container.New(layout.NewFormLayout(), formItems...),
 		container.NewBorder(nil, nil,
-			createActionButtons(areaWidget, storeWidget, productWidget, barkWidget, intervalWidget),
+			createActionButtons(areaWidget, storeWidget, productWidget, pushWidget, intervalWidget),
 			createControlButtons(),
 		),
 		widget.NewSeparator(),
@@ -131,7 +138,7 @@ func initFyneApp() {
 }
 
 // 加载用户设置缓存 (Load user settings cache)
-func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *multiPicker, productWidget *multiPicker, barkNotifyWidget *widget.Entry, intervalWidget *widget.SelectEntry) {
+func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *multiPicker, productWidget *multiPicker, pushWidget *widget.Entry, intervalWidget *widget.SelectEntry) {
 	settings, err := services.LoadSettings()
 
 	interval := services.DefaultIntervalMs
@@ -146,49 +153,51 @@ func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *multiPick
 		storeWidget.SetSelected(settings.Stores())
 		productWidget.SetSelected(settings.Products())
 		services.Listen.SetListenItems(settings.ListenItems)
-		barkNotifyWidget.SetText(settings.BarkNotifyUrl)
+		pushWidget.SetText(settings.Pushes())
+		services.Listen.PushUrls = settings.Pushes()
 	} else {
 		areaWidget.SetSelected(services.Listen.Area.Title)
 	}
 }
 
 // 创建动作按钮 (Create action buttons)
-func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *multiPicker, productWidget *multiPicker, barkNotifyWidget *widget.Entry, intervalWidget *widget.SelectEntry) *fyne.Container {
-	barkTestButton := widget.NewButton("测试 Bark 通知", func() {
-		services.Listen.BarkNotifyUrl = barkNotifyWidget.Text
+func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *multiPicker, productWidget *multiPicker, pushWidget *widget.Entry, intervalWidget *widget.SelectEntry) *fyne.Container {
+	pushTestButton := widget.NewButton("测试手机推送", func() {
+		services.Listen.PushUrls = pushWidget.Text
+		if len(services.SplitPushTargets(pushWidget.Text)) == 0 {
+			dialog.ShowInformation("手机推送", "还没有填写推送地址。\n支持 Bark、Server酱、企业微信机器人、Telegram 和通用 Webhook，每行一个。", view.Window)
+			return
+		}
 		go func() {
-			err := services.Listen.SendPushNotificationByBark("有货提醒（测试）", "此为测试提醒，点击通知将跳转到相关链接", services.Listen.BagURL())
-			if err != nil {
-				dialog.ShowError(fmt.Errorf("Bark 通知发送失败: %w", err), view.Window)
-				return
+			results := services.Listen.SendPush("有货提醒（测试）", "这是一条测试推送，有货时会以同样方式通知你", services.Listen.BagURL())
+			var lines []string
+			for _, r := range results {
+				status := "成功"
+				if r.Err != nil {
+					status = "失败：" + r.Err.Error()
+				}
+				lines = append(lines, fmt.Sprintf("[%s] %s\n%s", r.Channel, services.MaskTarget(r.Target), status))
 			}
-			dialog.ShowInformation("Bark", "测试通知已发送，请查看手机", view.Window)
+			dialog.ShowInformation("手机推送测试结果", strings.Join(lines, "\n\n"), view.Window)
 		}()
 	})
-	if !barkEnabled {
-		barkTestButton.Hide()
-	}
 
 	return container.NewHBox(
 		widget.NewButton("添加", func() {
 			if len(storeWidget.Selected()) == 0 || len(productWidget.Selected()) == 0 {
 				dialog.ShowError(errors.New("请选择门店和型号"), view.Window)
 			} else {
-				barkNotifyUrl := ""
-				if barkEnabled {
-					barkNotifyUrl = barkNotifyWidget.Text
-				}
 				// 门店 × 型号的所有组合都加入监听
 				for _, store := range storeWidget.Selected() {
 					for _, product := range productWidget.Selected() {
-						services.Listen.Add(areaWidget.Selected, store, product, barkNotifyUrl)
+						services.Listen.Add(areaWidget.Selected, store, product)
 					}
 				}
 				services.SaveSettings(services.UserSettings{
 					SelectedArea:     areaWidget.Selected,
 					SelectedStores:   storeWidget.Selected(),
 					SelectedProducts: productWidget.Selected(),
-					BarkNotifyUrl:    barkNotifyWidget.Text,
+					PushUrls:         pushWidget.Text,
 					ListenIntervalMs: services.ParseIntervalLabel(intervalWidget.Text),
 					ListenItems:      services.Listen.GetListenItems(),
 				})
@@ -208,7 +217,7 @@ func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *multiPicker
 		widget.NewButton("测试打开购物车", func() {
 			services.Listen.OpenBag()
 		}),
-		barkTestButton,
+		pushTestButton,
 	)
 }
 
