@@ -9,13 +9,12 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
 // multiPicker 多选下拉：点击弹出勾选列表，用于门店和型号
 type multiPicker struct {
-	Button      *widget.Button
+	field       *pickerField
 	title       string
 	placeHolder string
 	unit        string // 计数量词，如「家」「个」
@@ -27,15 +26,13 @@ type multiPicker struct {
 
 func newMultiPicker(title string, placeHolder string, unit string, options []string) *multiPicker {
 	p := &multiPicker{title: title, placeHolder: placeHolder, unit: unit, options: options}
-	p.Button = widget.NewButton(placeHolder, p.showDialog)
-	p.Button.Alignment = widget.ButtonAlignLeading
+	p.field = newPickerField(placeHolder, p.showDialog)
 	return p
 }
 
-// Widget 带下拉箭头的选择控件，外观与其他下拉框一致
+// Widget 选择控件，外观与其他下拉框一致
 func (p *multiPicker) Widget() fyne.CanvasObject {
-	arrow := container.NewPadded(widget.NewIcon(theme.MenuDropDownIcon()))
-	return container.NewStack(p.Button, container.NewBorder(nil, nil, nil, arrow))
+	return p.field
 }
 
 // SetOptions 切换地区时更新选项，并清空已选
@@ -84,11 +81,11 @@ func (p *multiPicker) refresh() {
 	selected := p.labels(p.selected)
 	switch n := len(selected); {
 	case n == 0:
-		p.Button.SetText(p.placeHolder)
+		p.field.SetText("")
 	case n <= 3:
-		p.Button.SetText(strings.Join(selected, "、"))
+		p.field.SetText(strings.Join(selected, "、"))
 	default:
-		p.Button.SetText(fmt.Sprintf("%s 等 %d %s", strings.Join(selected[:3], "、"), n, p.unit))
+		p.field.SetText(fmt.Sprintf("%s 等 %d %s", strings.Join(selected[:3], "、"), n, p.unit))
 	}
 }
 

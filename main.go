@@ -28,7 +28,7 @@ import (
 
 // 主界面上需要在多处读写的控件
 var (
-	areaWidget     *widget.RadioGroup
+	areaWidget     *radioRow
 	storeWidget    *multiPicker
 	productWidget  *multiPicker
 	pushWidget     *widget.Entry
@@ -82,16 +82,23 @@ func main() {
 		saveSettings()
 	}
 
-	// 地区选择器 (Area Selector)。切换地区只换门店和型号选项，监听列表保留，多个地区可同时监听
-	areaWidget = widget.NewRadioGroup(services.Area.ForOptions(), func(value string) {
+	// 地区选择器 (Area Selector)。切换地区只换门店和型号选项，监听列表保留，多个地区可同时监听；
+	// 各地区的勾选分别记住，切回来时恢复
+	areaSelections := newSelectionMemory()
+	currentArea := ""
+	areaWidget = newRadioRow(services.Area.ForOptions(), func(value string) {
 		// 防止空值或无效值导致崩溃
 		if value == "" {
 			return
 		}
+		areaSelections.save(currentArea, storeWidget.Selected(), productWidget.Selected())
+		currentArea = value
 		storeWidget.SetOptions(services.Store.ByAreaTitleForOptions(value))
 		productWidget.SetOptions(services.Product.ByAreaTitleForOptions(value))
+		stores, products := areaSelections.load(value)
+		storeWidget.SetSelected(stores)
+		productWidget.SetSelected(products)
 	})
-	areaWidget.Horizontal = true
 
 	help := `1. 在 Apple 官网将需要购买的型号加入购物车
 2. 选择地区、门店和型号，点击“添加”按钮加入监听列表；切换地区后可继续添加，多个地区同时监听
@@ -128,7 +135,7 @@ func main() {
 
 	// 表单放在同一个 FormLayout 里，标签列宽度一致
 	form := container.New(layout.NewFormLayout(),
-		widget.NewLabel("选择地区:"), areaWidget,
+		widget.NewLabel("选择地区:"), areaWidget.Widget(),
 		widget.NewLabel("选择门店:"), storeWidget.Widget(),
 		widget.NewLabel("选择型号:"), productWidget.Widget(),
 		widget.NewLabel("查询频率:"), intervalWidget,
