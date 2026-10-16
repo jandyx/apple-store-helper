@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2/data/binding"
@@ -32,6 +34,8 @@ const (
 	StatusOutStock = "无货"
 	StatusInStock  = "有货"
 	StatusWait     = "等待"
+	// StatusFailed 本轮没拿到该项结果（被拦截、超时或接口返回异常），不能当作无货
+	StatusFailed = "查询失败"
 
 	Pause   = "暂停"
 	Running = "监听中"
@@ -119,6 +123,8 @@ var Listen = listenService{
 }
 
 type listenService struct {
+	// mu 保护 items：界面线程（添加 / 清空）与监听协程会同时读写
+	mu            sync.Mutex
 	items         map[string]ListenItem
 	Status        binding.String
 	Area          model.Area
@@ -141,6 +147,9 @@ func (s *listenService) Add(areaTitle string, storeTitle string, productTitle st
 
 	uniqKey := store.StoreNumber + "." + product.Code
 
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
 	if s.items[uniqKey].Store.StoreNumber == "" {
 		s.items[uniqKey] = ListenItem{
 			Store:   store,
@@ -150,27 +159,64 @@ func (s *listenService) Add(areaTitle string, storeTitle string, productTitle st
 	}
 
 	s.BarkNotifyUrl = barkNotifyUrl
-	s.UpdateLogStr()
+	s.updateLogStrLocked()
 }
 
 func (s *listenService) Clean() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.items = map[string]ListenItem{}
-	s.UpdateLogStr()
+	s.updateLogStrLocked()
 }
 
 func (s *listenService) SetListenItems(items map[string]ListenItem) {
-	s.items = items
-	s.UpdateLogStr()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.items = map[string]ListenItem{}
+	for key, item := range items {
+		s.items[key] = item
+	}
+	s.updateLogStrLocked()
 }
 
+// GetListenItems 返回监听项的副本，调用方可放心遍历或序列化
 func (s *listenService) GetListenItems() map[string]ListenItem {
-	return s.items
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	items := make(map[string]ListenItem, len(s.items))
+	for key, item := range s.items {
+		items[key] = item
+	}
+	return items
 }
 
 func (s *listenService) UpdateLogStr() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.updateLogStrLocked()
+}
+
+// sortedKeysLocked 按门店、型号排序，避免列表每轮刷新顺序乱跳
+func (s *listenService) sortedKeysLocked() []string {
+	keys := make([]string, 0, len(s.items))
+	for key := range s.items {
+		keys = append(keys, key)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		a, b := s.items[keys[i]], s.items[keys[j]]
+		if a.Store.CityStoreName != b.Store.CityStoreName {
+			return a.Store.CityStoreName < b.Store.CityStoreName
+		}
+		return a.Product.Title < b.Product.Title
+	})
+	return keys
+}
+
+func (s *listenService) updateLogStrLocked() {
 	var str string
 
-	for _, item := range s.items {
+	for _, key := range s.sortedKeysLocked() {
+		item := s.items[key]
 
 		str += fmt.Sprintf(
 			"[%s] %s %s %s %s",
@@ -186,7 +232,17 @@ func (s *listenService) UpdateLogStr() {
 }
 
 func (s *listenService) UpdateStatus(uniqKey string, status string) {
-	item := s.items[uniqKey]
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.updateStatusLocked(uniqKey, status)
+}
+
+func (s *listenService) updateStatusLocked(uniqKey string, status string) {
+	item, exists := s.items[uniqKey]
+	if !exists {
+		// 查询期间被清空或删除的项不再写回
+		return
+	}
 	item.Time = carbon.DateTime{Carbon: carbon.Now(carbon.Shanghai)}
 	item.Status = status
 	s.items[uniqKey] = item
@@ -206,35 +262,33 @@ func (s *listenService) Run() {
 
 	go func() {
 		for {
-			if stats, ok := s.Status.Get(); ok == nil && stats == Running && len(s.items) > 0 {
-				result := s.groupByStore()
+			items := s.GetListenItems()
+			if stats, ok := s.Status.Get(); ok == nil && stats == Running && len(items) > 0 {
+				result := s.groupByStore(items)
 
-				for key, item := range s.items {
+				// 同一轮可能多项同时有货，全部收集后一起提醒，避免漏报
+				var hits []string
+				s.mu.Lock()
+				for _, key := range s.sortedKeysLocked() {
+					item := s.items[key]
 					status, ok := result.skus[item.Store.StoreNumber+"."+item.Product.Code]
-					if !ok {
-						if item.Status == "" {
-							s.UpdateStatus(key, StatusWait)
-						}
-						continue
+					switch {
+					case !ok:
+						s.updateStatusLocked(key, StatusFailed)
+					case status:
+						s.updateStatusLocked(key, StatusInStock)
+						hits = append(hits, fmt.Sprintf("%s %s", item.Store.CityStoreName, item.Product.Title))
+					default:
+						s.updateStatusLocked(key, StatusOutStock)
 					}
-
-					if status {
-						s.UpdateStatus(key, StatusInStock)
-						s.Status.Set(Pause)
-
-						var bagUrl = s.BagURL()
-						s.openBrowser(bagUrl)
-						msg := fmt.Sprintf("%s %s 有货", item.Store.CityStoreName, item.Product.Title)
-						dialog.ShowInformation("匹配成功", msg, view.Window)
-						notify.Send("有货提醒", msg)
-						go s.AlertMp3()
-						go s.SendPushNotificationByBark("有货提醒", msg, bagUrl)
-						break
-					}
-					s.UpdateStatus(key, StatusOutStock)
 				}
+				s.updateLogStrLocked()
+				s.mu.Unlock()
 
-				s.UpdateLogStr()
+				if len(hits) > 0 {
+					s.Status.Set(Pause)
+					s.alertInStock(hits)
+				}
 
 				interval := s.IntervalDuration()
 				if result.blocked && interval < blockedBackoff {
@@ -254,7 +308,23 @@ type skuFetch struct {
 	blocked bool
 }
 
-func (s *listenService) groupByStore() skuFetch {
+// alertInStock 打开购物车并通过弹窗、系统通知、提示音、Bark 提醒
+func (s *listenService) alertInStock(hits []string) {
+	bagUrl := s.BagURL()
+	s.openBrowser(bagUrl)
+
+	msg := strings.Join(hits, "\n") + "\n有货"
+	title := "有货提醒"
+	if len(hits) > 1 {
+		title = fmt.Sprintf("有货提醒（%d 项）", len(hits))
+	}
+	dialog.ShowInformation("匹配成功", msg, view.Window)
+	notify.Send(title, msg)
+	go s.AlertMp3()
+	go s.SendPushNotificationByBark(title, msg, bagUrl)
+}
+
+func (s *listenService) groupByStore(items map[string]ListenItem) skuFetch {
 	result := skuFetch{skus: map[string]bool{}}
 
 	defer func() {
@@ -264,7 +334,7 @@ func (s *listenService) groupByStore() skuFetch {
 	}()
 
 	group := map[string][]ListenItem{}
-	for _, item := range s.items {
+	for _, item := range items {
 		group[item.Store.StoreNumber] = append(group[item.Store.StoreNumber], item)
 	}
 
