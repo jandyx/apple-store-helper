@@ -34,23 +34,57 @@ const (
 	Pause   = "暂停"
 	Running = "监听中"
 
-	pollInterval   = 1500 * time.Millisecond
-	blockedBackoff = 5 * time.Second
+	DefaultIntervalSeconds = 3
+	blockedBackoff         = 5 * time.Second
+	// 暂停或无监听项时用短间隔检查状态，保证点击“开始”后立即生效
+	idleInterval = 200 * time.Millisecond
 )
 
+// IntervalOptions 可选的查询间隔（秒）。1 秒较激进，容易触发 Apple 风控；30/60 秒适合长期挂机
+var IntervalOptions = []int{1, 3, 5, 10, 30, 60}
+
+// IntervalLabel 秒数转下拉框文案
+func IntervalLabel(seconds int) string {
+	if seconds == DefaultIntervalSeconds {
+		return fmt.Sprintf("%d 秒 (默认)", seconds)
+	}
+	return fmt.Sprintf("%d 秒", seconds)
+}
+
+// IntervalLabels 下拉框选项
+func IntervalLabels() []string {
+	labels := make([]string, 0, len(IntervalOptions))
+	for _, seconds := range IntervalOptions {
+		labels = append(labels, IntervalLabel(seconds))
+	}
+	return labels
+}
+
+// ParseIntervalLabel 下拉框文案转秒数，无法识别时回退默认值
+func ParseIntervalLabel(label string) int {
+	for _, seconds := range IntervalOptions {
+		if IntervalLabel(seconds) == label {
+			return seconds
+		}
+	}
+	return DefaultIntervalSeconds
+}
+
 var Listen = listenService{
-	items:  map[string]ListenItem{},
-	Status: binding.NewString(),
-	Area:   model.Areas[0],
-	Logs:   widget.NewLabel(""),
+	items:           map[string]ListenItem{},
+	Status:          binding.NewString(),
+	Area:            model.Areas[0],
+	Logs:            widget.NewLabel(""),
+	IntervalSeconds: binding.NewInt(),
 }
 
 type listenService struct {
-	items         map[string]ListenItem
-	Status        binding.String
-	Area          model.Area
-	Logs          *widget.Label
-	BarkNotifyUrl string
+	items           map[string]ListenItem
+	Status          binding.String
+	Area            model.Area
+	Logs            *widget.Label
+	BarkNotifyUrl   string
+	IntervalSeconds binding.Int
 }
 
 type ListenItem struct {
@@ -118,6 +152,15 @@ func (s *listenService) UpdateStatus(uniqKey string, status string) {
 	s.items[uniqKey] = item
 }
 
+// IntervalDuration 当前查询间隔，未设置或非法时回退默认值
+func (s *listenService) IntervalDuration() time.Duration {
+	seconds, err := s.IntervalSeconds.Get()
+	if err != nil || seconds <= 0 {
+		seconds = DefaultIntervalSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func (s *listenService) Run() {
 	s.Status.Set(Pause)
 
@@ -155,13 +198,16 @@ func (s *listenService) Run() {
 				}
 
 				s.UpdateLogStr()
-				if result.blocked {
-					time.Sleep(blockedBackoff)
-					continue
+
+				interval := s.IntervalDuration()
+				if result.blocked && interval < blockedBackoff {
+					interval = blockedBackoff
 				}
+				time.Sleep(interval)
+				continue
 			}
 
-			time.Sleep(pollInterval)
+			time.Sleep(idleInterval)
 		}
 	}()
 }
