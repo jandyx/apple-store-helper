@@ -43,12 +43,13 @@ func main() {
 		if value == "" {
 			return
 		}
-		seconds := services.ParseIntervalLabel(value)
-		services.Listen.IntervalSeconds.Set(seconds)
+		ms := services.ParseIntervalLabel(value)
+		services.Listen.IntervalMs.Set(ms)
 
 		// 已有配置文件时立即落盘；没有时等“添加”一起保存，避免生成只含频率的配置导致地区为空
-		if settings, err := services.LoadSettings(); err == nil && settings.ListenInterval != seconds {
-			settings.ListenInterval = seconds
+		if settings, err := services.LoadSettings(); err == nil && settings.ListenIntervalMs != ms {
+			settings.ListenIntervalMs = ms
+			settings.ListenInterval = 0
 			services.SaveSettings(settings)
 		}
 	})
@@ -122,11 +123,11 @@ func initFyneApp() {
 func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *widget.Select, productWidget *widget.Select, barkNotifyWidget *widget.Entry, intervalWidget *widget.Select) {
 	settings, err := services.LoadSettings()
 
-	interval := services.DefaultIntervalSeconds
-	if err == nil && settings.ListenInterval > 0 {
-		interval = settings.ListenInterval
+	interval := services.DefaultIntervalMs
+	if err == nil && settings.IntervalMs() > 0 {
+		interval = settings.IntervalMs()
 	}
-	services.Listen.IntervalSeconds.Set(interval)
+	services.Listen.IntervalMs.Set(interval)
 	intervalWidget.SetSelected(services.IntervalLabel(interval))
 
 	if err == nil {
@@ -149,12 +150,12 @@ func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *widget.Sele
 			} else {
 				services.Listen.Add(areaWidget.Selected, storeWidget.Selected, productWidget.Selected, barkNotifyWidget.Text)
 				services.SaveSettings(services.UserSettings{
-					SelectedArea:    areaWidget.Selected,
-					SelectedStore:   storeWidget.Selected,
-					SelectedProduct: productWidget.Selected,
-					BarkNotifyUrl:   barkNotifyWidget.Text,
-					ListenInterval:  services.ParseIntervalLabel(intervalWidget.Selected),
-					ListenItems:     services.Listen.GetListenItems(),
+					SelectedArea:     areaWidget.Selected,
+					SelectedStore:    storeWidget.Selected,
+					SelectedProduct:  productWidget.Selected,
+					BarkNotifyUrl:    barkNotifyWidget.Text,
+					ListenIntervalMs: services.ParseIntervalLabel(intervalWidget.Selected),
+					ListenItems:      services.Listen.GetListenItems(),
 				})
 			}
 		}),

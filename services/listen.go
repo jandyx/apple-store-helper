@@ -34,57 +34,61 @@ const (
 	Pause   = "暂停"
 	Running = "监听中"
 
-	DefaultIntervalSeconds = 3
-	blockedBackoff         = 5 * time.Second
+	DefaultIntervalMs = 3000
+	blockedBackoff    = 5 * time.Second
 	// 暂停或无监听项时用短间隔检查状态，保证点击“开始”后立即生效
 	idleInterval = 200 * time.Millisecond
 )
 
-// IntervalOptions 可选的查询间隔（秒）。1 秒较激进，容易触发 Apple 风控；30/60 秒适合长期挂机
-var IntervalOptions = []int{1, 3, 5, 10, 30, 60}
+// IntervalOptions 可选的查询间隔（毫秒）。2 秒以内较激进，容易触发 Apple 风控（被拦截后会停 5 秒）；30/60 秒适合长期挂机
+var IntervalOptions = []int{500, 1000, 2000, 3000, 5000, 10000, 30000, 60000}
 
-// IntervalLabel 秒数转下拉框文案
-func IntervalLabel(seconds int) string {
-	if seconds == DefaultIntervalSeconds {
-		return fmt.Sprintf("%d 秒 (默认)", seconds)
+// IntervalLabel 毫秒数转下拉框文案
+func IntervalLabel(ms int) string {
+	label := fmt.Sprintf("%g 秒", float64(ms)/1000)
+	switch {
+	case ms == DefaultIntervalMs:
+		label += " (默认)"
+	case ms < 2000:
+		label += " (易被风控)"
 	}
-	return fmt.Sprintf("%d 秒", seconds)
+	return label
 }
 
 // IntervalLabels 下拉框选项
 func IntervalLabels() []string {
 	labels := make([]string, 0, len(IntervalOptions))
-	for _, seconds := range IntervalOptions {
-		labels = append(labels, IntervalLabel(seconds))
+	for _, ms := range IntervalOptions {
+		labels = append(labels, IntervalLabel(ms))
 	}
 	return labels
 }
 
-// ParseIntervalLabel 下拉框文案转秒数，无法识别时回退默认值
+// ParseIntervalLabel 下拉框文案转毫秒数，无法识别时回退默认值
 func ParseIntervalLabel(label string) int {
-	for _, seconds := range IntervalOptions {
-		if IntervalLabel(seconds) == label {
-			return seconds
+	for _, ms := range IntervalOptions {
+		if IntervalLabel(ms) == label {
+			return ms
 		}
 	}
-	return DefaultIntervalSeconds
+	return DefaultIntervalMs
 }
 
 var Listen = listenService{
-	items:           map[string]ListenItem{},
-	Status:          binding.NewString(),
-	Area:            model.Areas[0],
-	Logs:            widget.NewLabel(""),
-	IntervalSeconds: binding.NewInt(),
+	items:      map[string]ListenItem{},
+	Status:     binding.NewString(),
+	Area:       model.Areas[0],
+	Logs:       widget.NewLabel(""),
+	IntervalMs: binding.NewInt(),
 }
 
 type listenService struct {
-	items           map[string]ListenItem
-	Status          binding.String
-	Area            model.Area
-	Logs            *widget.Label
-	BarkNotifyUrl   string
-	IntervalSeconds binding.Int
+	items         map[string]ListenItem
+	Status        binding.String
+	Area          model.Area
+	Logs          *widget.Label
+	BarkNotifyUrl string
+	IntervalMs    binding.Int
 }
 
 type ListenItem struct {
@@ -154,11 +158,11 @@ func (s *listenService) UpdateStatus(uniqKey string, status string) {
 
 // IntervalDuration 当前查询间隔，未设置或非法时回退默认值
 func (s *listenService) IntervalDuration() time.Duration {
-	seconds, err := s.IntervalSeconds.Get()
-	if err != nil || seconds <= 0 {
-		seconds = DefaultIntervalSeconds
+	ms, err := s.IntervalMs.Get()
+	if err != nil || ms <= 0 {
+		ms = DefaultIntervalMs
 	}
-	return time.Duration(seconds) * time.Second
+	return time.Duration(ms) * time.Millisecond
 }
 
 func (s *listenService) Run() {

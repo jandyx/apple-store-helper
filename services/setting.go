@@ -6,12 +6,13 @@ import (
 )
 
 type UserSettings struct {
-	SelectedArea    string                `json:"selected_area"`
-	SelectedStore   string                `json:"selected_store"`
-	SelectedProduct string                `json:"selected_product"`
-	BarkNotifyUrl   string                `json:"bark_notify_url"`
-	ListenInterval  int                   `json:"listen_interval"`
-	ListenItems     map[string]ListenItem `json:"listen_items"`
+	SelectedArea     string                `json:"selected_area"`
+	SelectedStore    string                `json:"selected_store"`
+	SelectedProduct  string                `json:"selected_product"`
+	BarkNotifyUrl    string                `json:"bark_notify_url"`
+	ListenInterval   int                   `json:"listen_interval"` // 旧版字段（秒），仅用于读取兼容
+	ListenIntervalMs int                   `json:"listen_interval_ms"`
+	ListenItems      map[string]ListenItem `json:"listen_items"`
 }
 
 // 保存配置到本地文件 SaveSettings saves settings to a file
@@ -32,6 +33,14 @@ func LoadSettings() (UserSettings, error) {
 	}
 	err = json.Unmarshal(data, &settings)
 	return settings, err
+}
+
+// IntervalMs 查询间隔（毫秒），兼容旧版按秒保存的 listen_interval
+func (s UserSettings) IntervalMs() int {
+	if s.ListenIntervalMs > 0 {
+		return s.ListenIntervalMs
+	}
+	return s.ListenInterval * 1000
 }
 
 // 清空缓存配置 ClearSettings removes the settings file
