@@ -33,7 +33,10 @@
 - **门店和型号都能多选**：一次添加所选门店与型号的全部组合，并发查询
 - **查询频率可调**：最快 0.3 秒一次。可以从下拉框选，也可以直接输入，如 `1.5`、`800ms`
 - **有货时多重提醒**：系统通知、提示音，并自动打开购物车页面
-- **开售前自检**：用「测试通知」「试听」「测试打开购物车」三个按钮，提前确认每个环节都正常
+- **手机推送**：支持 Bark、Server酱（推到微信）、企业微信群机器人、Telegram 和通用 Webhook，可以同时填多个
+- **后台运行**：关闭窗口会收进系统托盘，继续监听。点托盘图标、Dock 图标或再次打开 App 就能找回窗口
+- **查询失败看得见**：被拦截、超时、门店编号失效时，列表会显示具体原因，不会误显示成「无货」
+- **开售前自检**：用「测试通知」「试听」「测试打开购物车」「测试手机推送」按钮，提前确认每个环节都正常
 - **自动保存配置**：地区、门店、型号、监听列表和查询频率都会保存，下次打开直接使用
 
 ## 使用方法
@@ -53,6 +56,20 @@
 4. 有货时，程序会发出通知、播放提示音、自动打开购物车页面，并暂停监听。在购物车页面选择门店和取货时间，完成下单。
 5. 要继续监听，再点一次「开始」。
 
+### 手机推送地址
+
+在「手机推送」框里每行填一个地址，程序会按域名自动识别渠道。填好后点「测试手机推送」，会逐条显示每个地址是否发送成功。
+
+| 渠道 | 地址格式 | 获取方式 |
+| --- | --- | --- |
+| Server酱（推到微信） | `https://sctapi.ftqq.com/<SendKey>.send` | 在 [sct.ftqq.com](https://sct.ftqq.com) 用微信扫码登录，复制 SendKey |
+| 企业微信群机器人 | `https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=<key>` | 在企业微信群里添加「群机器人」，复制 Webhook 地址 |
+| Bark（iOS） | `https://api.day.app/<key>` | 在 Bark App 里复制地址 |
+| Telegram | `https://api.telegram.org/bot<token>/sendMessage?chat_id=<id>` | 通过 @BotFather 创建机器人 |
+| 通用 Webhook | 任意 `https://` 地址 | 程序会 POST 一段 JSON：`{"title","content","url"}` |
+
+推送地址里包含密钥，不要截图或公开分享。
+
 ### 注意事项
 
 - 预售阶段，门店自提可能一直显示无货。程序没检测到库存，不代表一定买不到，可以同时留意线上发货。
@@ -68,6 +85,8 @@
 | Linux | `~/.config/apple-store-helper/user_settings.json` |
 
 点「清空」会清掉监听列表，并删除这个文件。
+
+运行日志 `app.log` 在同一目录。点程序里的「打开日志」可以直接打开这个目录，遇到问题时把 `app.log` 发出来即可排查。
 
 ## 开发
 
@@ -116,6 +135,8 @@ CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
 门店数据在 `config/files/stores.json`。
 
 ## 更新记录
+
+- 从社区 fork [dashug/apple-store-helper](https://github.com/dashug/apple-store-helper) 引入多渠道手机推送、查询间隔随机抖动与并发上限、失败原因展示、日志文件和系统托盘。
 
 - iPhone 17 Pro / Pro Max 已从 Apple 官网下架，已从型号列表中移除。
 - 日本的同一个型号会按运营商（SoftBank、docomo、SIM 免费版）重复出现，现在会按型号编号去重。
