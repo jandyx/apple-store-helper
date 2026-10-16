@@ -8,6 +8,9 @@ import (
 	"apple-store-helper/view"
 	"errors"
 	"fmt"
+	"log"
+	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -23,6 +26,11 @@ import (
 
 // main 主函数 (Main function)
 func main() {
+	if path, err := services.SetupLogging(); err != nil {
+		log.Println("日志文件初始化失败:", err)
+	} else {
+		log.Println("启动", common.VERSION, "日志:", path)
+	}
 	initMP3Player()
 	initFyneApp()
 	notify.Setup()
@@ -217,8 +225,30 @@ func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *multiPicker
 		widget.NewButton("测试打开购物车", func() {
 			services.Listen.OpenBag()
 		}),
+		widget.NewButton("打开日志", openLogDir),
 		pushTestButton,
 	)
+}
+
+// openLogDir 在访达 / 资源管理器中打开日志所在目录，出问题时把 app.log 发给开发者
+func openLogDir() {
+	dir, err := services.DataDir()
+	if err != nil {
+		dialog.ShowError(err, view.Window)
+		return
+	}
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", dir)
+	case "windows":
+		cmd = exec.Command("explorer", dir)
+	default:
+		cmd = exec.Command("xdg-open", dir)
+	}
+	if err := cmd.Start(); err != nil {
+		dialog.ShowError(fmt.Errorf("打开日志目录失败: %w\n目录: %s", err, dir), view.Window)
+	}
 }
 
 // 创建控制按钮 (Create control buttons)

@@ -12,16 +12,25 @@ const settingsFileName = "user_settings.json"
 // settingsPath 配置文件路径：~/Library/Application Support/apple-store-helper/user_settings.json（macOS）。
 // 双击 .app 启动时工作目录是 /，不可写，所以不能用相对路径
 func settingsPath() string {
-	dir, err := os.UserConfigDir()
+	dir, err := DataDir()
 	if err != nil {
 		return settingsFileName
+	}
+	return filepath.Join(dir, settingsFileName)
+}
+
+// DataDir 配置与日志所在目录，不存在时创建
+func DataDir() (string, error) {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return "", err
 	}
 	dir = filepath.Join(dir, "apple-store-helper")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		log.Println("create settings dir failed", err)
-		return settingsFileName
+		return "", err
 	}
-	return filepath.Join(dir, settingsFileName)
+	return dir, nil
 }
 
 type UserSettings struct {
