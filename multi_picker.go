@@ -13,36 +13,37 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-const storePickerPlaceHolder = "请选择自提门店（可多选）"
-
-// storePicker 门店多选：点击按钮弹出勾选列表
-type storePicker struct {
-	Button   *widget.Button
-	options  []string
-	selected []string
+// multiPicker 多选下拉：点击弹出勾选列表，用于门店和型号
+type multiPicker struct {
+	Button      *widget.Button
+	title       string
+	placeHolder string
+	unit        string // 计数量词，如「家」「个」
+	options     []string
+	selected    []string
 }
 
-func newStorePicker(options []string) *storePicker {
-	p := &storePicker{options: options}
-	p.Button = widget.NewButton(storePickerPlaceHolder, p.showDialog)
+func newMultiPicker(title string, placeHolder string, unit string, options []string) *multiPicker {
+	p := &multiPicker{title: title, placeHolder: placeHolder, unit: unit, options: options}
+	p.Button = widget.NewButton(placeHolder, p.showDialog)
 	p.Button.Alignment = widget.ButtonAlignLeading
 	return p
 }
 
-// Widget 带下拉箭头的门店选择控件，外观与其他下拉框一致
-func (p *storePicker) Widget() fyne.CanvasObject {
+// Widget 带下拉箭头的选择控件，外观与其他下拉框一致
+func (p *multiPicker) Widget() fyne.CanvasObject {
 	arrow := container.NewPadded(widget.NewIcon(theme.MenuDropDownIcon()))
 	return container.NewStack(p.Button, container.NewBorder(nil, nil, nil, arrow))
 }
 
-// SetOptions 切换地区时更新可选门店，并清空已选
-func (p *storePicker) SetOptions(options []string) {
+// SetOptions 切换地区时更新选项，并清空已选
+func (p *multiPicker) SetOptions(options []string) {
 	p.options = options
 	p.SetSelected(nil)
 }
 
-// SetSelected 设置已选门店，忽略不在当前选项中的值
-func (p *storePicker) SetSelected(selected []string) {
+// SetSelected 设置已选项，忽略不在当前选项中的值
+func (p *multiPicker) SetSelected(selected []string) {
 	valid := map[string]bool{}
 	for _, option := range p.options {
 		valid[option] = true
@@ -58,22 +59,22 @@ func (p *storePicker) SetSelected(selected []string) {
 	p.refresh()
 }
 
-func (p *storePicker) Selected() []string {
+func (p *multiPicker) Selected() []string {
 	return p.selected
 }
 
-func (p *storePicker) refresh() {
+func (p *multiPicker) refresh() {
 	switch n := len(p.selected); {
 	case n == 0:
-		p.Button.SetText(storePickerPlaceHolder)
+		p.Button.SetText(p.placeHolder)
 	case n <= 3:
 		p.Button.SetText(strings.Join(p.selected, "、"))
 	default:
-		p.Button.SetText(fmt.Sprintf("%s 等 %d 家", strings.Join(p.selected[:3], "、"), n))
+		p.Button.SetText(fmt.Sprintf("%s 等 %d %s", strings.Join(p.selected[:3], "、"), n, p.unit))
 	}
 }
 
-func (p *storePicker) showDialog() {
+func (p *multiPicker) showDialog() {
 	check := widget.NewCheckGroup(p.options, nil)
 	check.SetSelected(append([]string(nil), p.selected...))
 
@@ -84,7 +85,7 @@ func (p *storePicker) showDialog() {
 	scroll := container.NewVScroll(check)
 	scroll.SetMinSize(fyne.NewSize(420, 420))
 
-	d := dialog.NewCustomConfirm("选择门店", "确定", "取消", container.NewBorder(tools, nil, nil, nil, scroll), func(ok bool) {
+	d := dialog.NewCustomConfirm(p.title, "确定", "取消", container.NewBorder(tools, nil, nil, nil, scroll), func(ok bool) {
 		if ok {
 			p.SetSelected(check.Selected)
 		}

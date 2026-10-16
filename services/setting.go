@@ -28,7 +28,8 @@ type UserSettings struct {
 	SelectedArea     string                `json:"selected_area"`
 	SelectedStore    string                `json:"selected_store"` // 旧版单选字段，仅用于读取兼容
 	SelectedStores   []string              `json:"selected_stores"`
-	SelectedProduct  string                `json:"selected_product"`
+	SelectedProduct  string                `json:"selected_product"` // 旧版单选字段，仅用于读取兼容
+	SelectedProducts []string              `json:"selected_products"`
 	BarkNotifyUrl    string                `json:"bark_notify_url"`
 	ListenInterval   int                   `json:"listen_interval"` // 旧版字段（秒），仅用于读取兼容
 	ListenIntervalMs int                   `json:"listen_interval_ms"`
@@ -66,6 +67,17 @@ func (s UserSettings) Stores() []string {
 	}
 	if s.SelectedStore != "" {
 		return []string{s.SelectedStore}
+	}
+	return nil
+}
+
+// Products 已选型号，兼容旧版单选
+func (s UserSettings) Products() []string {
+	if len(s.SelectedProducts) > 0 {
+		return s.SelectedProducts
+	}
+	if s.SelectedProduct != "" {
+		return []string{s.SelectedProduct}
 	}
 	return nil
 }

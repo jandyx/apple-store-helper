@@ -31,11 +31,10 @@ func main() {
 	defaultArea := services.Listen.Area.Title
 
 	// 门店选择器 (Store Selector)
-	storeWidget := newStorePicker(services.Store.ByAreaTitleForOptions(defaultArea))
+	storeWidget := newMultiPicker("选择门店", "请选择自提门店（可多选）", "家", services.Store.ByAreaTitleForOptions(defaultArea))
 
 	// 型号选择器 (Product Selector)
-	productWidget := widget.NewSelect(services.Product.ByAreaTitleForOptions(defaultArea), nil)
-	productWidget.PlaceHolder = "请选择 iPhone 型号"
+	productWidget := newMultiPicker("选择型号", "请选择 iPhone 型号（可多选）", "个", services.Product.ByAreaTitleForOptions(defaultArea))
 
 	// Bark 通知输入框
 	barkWidget := widget.NewEntry()
@@ -69,8 +68,7 @@ func main() {
 
 		storeWidget.SetOptions(services.Store.ByAreaTitleForOptions(value))
 
-		productWidget.Options = services.Product.ByAreaTitleForOptions(value)
-		productWidget.ClearSelected()
+		productWidget.SetOptions(services.Product.ByAreaTitleForOptions(value))
 
 		services.Listen.Area = services.Area.GetArea(value)
 		services.Listen.Clean()
@@ -89,7 +87,7 @@ func main() {
 	formItems := []fyne.CanvasObject{
 		widget.NewLabel("选择地区:"), areaWidget,
 		widget.NewLabel("选择门店:"), storeWidget.Widget(),
-		widget.NewLabel("选择型号:"), productWidget,
+		widget.NewLabel("选择型号:"), productWidget.Widget(),
 	}
 	if barkEnabled {
 		formItems = append(formItems, widget.NewLabel("Bark 通知地址:"), barkWidget)
@@ -131,7 +129,7 @@ func initFyneApp() {
 }
 
 // 加载用户设置缓存 (Load user settings cache)
-func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *storePicker, productWidget *widget.Select, barkNotifyWidget *widget.Entry, intervalWidget *widget.SelectEntry) {
+func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *multiPicker, productWidget *multiPicker, barkNotifyWidget *widget.Entry, intervalWidget *widget.SelectEntry) {
 	settings, err := services.LoadSettings()
 
 	interval := services.DefaultIntervalMs
@@ -144,7 +142,7 @@ func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *storePick
 	if err == nil {
 		areaWidget.SetSelected(settings.SelectedArea)
 		storeWidget.SetSelected(settings.Stores())
-		productWidget.SetSelected(settings.SelectedProduct)
+		productWidget.SetSelected(settings.Products())
 		services.Listen.SetListenItems(settings.ListenItems)
 		barkNotifyWidget.SetText(settings.BarkNotifyUrl)
 	} else {
@@ -153,7 +151,7 @@ func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *storePick
 }
 
 // 创建动作按钮 (Create action buttons)
-func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *storePicker, productWidget *widget.Select, barkNotifyWidget *widget.Entry, intervalWidget *widget.SelectEntry) *fyne.Container {
+func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *multiPicker, productWidget *multiPicker, barkNotifyWidget *widget.Entry, intervalWidget *widget.SelectEntry) *fyne.Container {
 	barkTestButton := widget.NewButton("测试 Bark 通知", func() {
 		services.Listen.BarkNotifyUrl = barkNotifyWidget.Text
 		go func() {
@@ -171,20 +169,23 @@ func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *storePicker
 
 	return container.NewHBox(
 		widget.NewButton("添加", func() {
-			if len(storeWidget.Selected()) == 0 || productWidget.Selected == "" {
+			if len(storeWidget.Selected()) == 0 || len(productWidget.Selected()) == 0 {
 				dialog.ShowError(errors.New("请选择门店和型号"), view.Window)
 			} else {
 				barkNotifyUrl := ""
 				if barkEnabled {
 					barkNotifyUrl = barkNotifyWidget.Text
 				}
+				// 门店 × 型号的所有组合都加入监听
 				for _, store := range storeWidget.Selected() {
-					services.Listen.Add(areaWidget.Selected, store, productWidget.Selected, barkNotifyUrl)
+					for _, product := range productWidget.Selected() {
+						services.Listen.Add(areaWidget.Selected, store, product, barkNotifyUrl)
+					}
 				}
 				services.SaveSettings(services.UserSettings{
 					SelectedArea:     areaWidget.Selected,
 					SelectedStores:   storeWidget.Selected(),
-					SelectedProduct:  productWidget.Selected,
+					SelectedProducts: productWidget.Selected(),
 					BarkNotifyUrl:    barkNotifyWidget.Text,
 					ListenIntervalMs: services.ParseIntervalLabel(intervalWidget.Text),
 					ListenItems:      services.Listen.GetListenItems(),
