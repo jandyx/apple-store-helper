@@ -26,8 +26,9 @@ func LogPath() (string, error) {
 	return filepath.Join(dir, logFileName), nil
 }
 
-// SetupLogging 让日志同时写入文件和 stderr，返回日志文件路径
-func SetupLogging() (string, error) {
+// SetupLogging 让日志写入文件，返回日志文件路径。
+// alsoStderr 为 true 时同时输出到 stderr；命令行版默认关闭，避免诊断日志淹没监听状态输出
+func SetupLogging(alsoStderr bool) (string, error) {
 	path, err := LogPath()
 	if err != nil {
 		return "", err
@@ -44,7 +45,11 @@ func SetupLogging() (string, error) {
 		return "", err
 	}
 
-	log.SetOutput(io.MultiWriter(os.Stderr, file))
+	if alsoStderr {
+		log.SetOutput(io.MultiWriter(os.Stderr, file))
+	} else {
+		log.SetOutput(file)
+	}
 	log.SetFlags(log.LstdFlags)
 	return path, nil
 }

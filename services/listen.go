@@ -1,34 +1,19 @@
 package services
 
+// 监听服务：维护监听列表、按频率查询库存、发现有货后记录历史并推送。
+// 不依赖任何图形或音频库，图形界面和命令行版都通过回调接入。
+
 import (
-	"bytes"
-	"context"
-	"errors"
 	"fmt"
-	"io/ioutil"
 	"log"
-	"math/rand"
-	"net/url"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
-	"fyne.io/fyne/v2/data/binding"
-	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/widget"
-	"github.com/faiface/beep"
-	"github.com/faiface/beep/mp3"
-	"github.com/faiface/beep/speaker"
 	"github.com/golang-module/carbon"
-	"github.com/tidwall/gjson"
 
 	"apple-store-helper/model"
-	"apple-store-helper/notify"
-	"apple-store-helper/theme"
-	"apple-store-helper/view"
 )
 
 const (
@@ -39,6 +24,8 @@ const (
 	StatusFailed = "查询失败"
 	// StatusStoreClosed 开售前 Apple 会把整个商店切到预购封面页，所有接口返回 503，开放后自动恢复
 	StatusStoreClosed = "商店维护中"
+	// StatusDisabled 用户临时停用的项，不参与查询
+	StatusDisabled = "已停用"
 
 	Pause   = "暂停"
 	Running = "监听中"
@@ -57,133 +44,219 @@ const (
 	idleInterval = 200 * time.Millisecond
 )
 
-// IntervalOptions 可选的查询间隔（毫秒）。2 秒以内较激进，容易触发 Apple 风控（被拦截后会停 5 秒）；30/60 秒适合长期挂机
-var IntervalOptions = []int{500, 1000, 2000, 3000, 5000, 10000, 30000, 60000}
+var Listen = newListenService()
 
-// IntervalLabel 毫秒数转下拉框文案
-func IntervalLabel(ms int) string {
-	label := fmt.Sprintf("%g 秒", float64(ms)/1000)
-	switch {
-	case ms == DefaultIntervalMs:
-		label += " (默认)"
-	case ms < 2000:
-		label += " (易被风控)"
+func newListenService() *listenService {
+	return &listenService{
+		items:      map[string]ListenItem{},
+		status:     Pause,
+		intervalMs: DefaultIntervalMs,
+		stopOnHit:  true,
 	}
-	return label
-}
-
-// IntervalLabels 下拉框选项
-func IntervalLabels() []string {
-	labels := make([]string, 0, len(IntervalOptions))
-	for _, ms := range IntervalOptions {
-		labels = append(labels, IntervalLabel(ms))
-	}
-	return labels
-}
-
-var intervalNumberRe = regexp.MustCompile(`\d+(\.\d+)?`)
-
-// ParseInterval 解析下拉框文案或自定义输入，如 "1.5"、"1.5 秒"、"800ms"、"800 毫秒"；
-// 默认单位为秒，低于 MinIntervalMs 时取下限
-func ParseInterval(text string) (int, bool) {
-	text = strings.TrimSpace(text)
-	for _, ms := range IntervalOptions {
-		if IntervalLabel(ms) == text {
-			return ms, true
-		}
-	}
-
-	number := intervalNumberRe.FindString(text)
-	if number == "" {
-		return 0, false
-	}
-	value, err := strconv.ParseFloat(number, 64)
-	if err != nil {
-		return 0, false
-	}
-
-	lower := strings.ToLower(text)
-	ms := int(value * 1000)
-	if strings.Contains(lower, "ms") || strings.Contains(text, "毫秒") {
-		ms = int(value)
-	}
-	if ms < MinIntervalMs {
-		ms = MinIntervalMs
-	}
-	return ms, true
-}
-
-// ParseIntervalLabel 同 ParseInterval，无法识别时回退默认值
-func ParseIntervalLabel(label string) int {
-	if ms, ok := ParseInterval(label); ok {
-		return ms
-	}
-	return DefaultIntervalMs
-}
-
-var Listen = listenService{
-	items:      map[string]ListenItem{},
-	Status:     binding.NewString(),
-	Area:       model.Areas[0],
-	Logs:       widget.NewLabel(""),
-	IntervalMs: binding.NewInt(),
 }
 
 type listenService struct {
-	// mu 保护 items：界面线程（添加 / 清空）与监听协程会同时读写
-	mu     sync.Mutex
-	items  map[string]ListenItem
-	Status binding.String
-	Area   model.Area
-	Logs   *widget.Label
-	// PushUrls 手机推送地址，每行一个，渠道按域名自动识别
-	PushUrls   string
-	IntervalMs binding.Int
+	// mu 保护以下全部字段：界面线程与监听协程会同时读写
+	mu         sync.Mutex
+	items      map[string]ListenItem
+	status     string
+	intervalMs int
+	// pushUrls 手机推送地址，每行一个，渠道按域名自动识别
+	pushUrls string
+	// stopOnHit 有货后暂停监听。图形界面需要（用户去下单），命令行版长期运行时关闭
+	stopOnHit bool
+
+	onChange  func()
+	onStatus  func(string)
+	onInStock func([]ListenItem)
 }
 
 type ListenItem struct {
-	Store   model.Store
-	Product model.Product
-	Status  string
-	Time    carbon.DateTime
+	// Area 所属地区。旧版配置没有该字段，加载时按当时选中的地区补上
+	Area     model.Area
+	Store    model.Store
+	Product  model.Product
+	Status   string
+	Time     carbon.DateTime
+	Disabled bool `json:",omitempty"`
 }
 
-func (s *listenService) Add(areaTitle string, storeTitle string, productTitle string) {
+// ItemKey 监听项的唯一键。门店编号全球唯一，型号编号按地区区分，两者组合即可
+func ItemKey(store model.Store, product model.Product) string {
+	return store.StoreNumber + "." + product.Code
+}
 
-	store := Store.GetStore(areaTitle, storeTitle)
-	product := Product.GetProduct(areaTitle, productTitle)
+// Row 排好序的一行监听项
+type Row struct {
+	Key  string
+	Item ListenItem
+}
 
-	uniqKey := store.StoreNumber + "." + product.Code
+// OnChange 监听列表或其状态变化时回调
+func (s *listenService) OnChange(fn func()) {
+	s.mu.Lock()
+	s.onChange = fn
+	s.mu.Unlock()
+}
 
+// OnStatusChange 开始 / 暂停状态变化时回调
+func (s *listenService) OnStatusChange(fn func(string)) {
+	s.mu.Lock()
+	s.onStatus = fn
+	s.mu.Unlock()
+}
+
+// OnInStock 检测到有货时回调，参数为本轮全部命中项（已排序）。推送与历史记录由服务自身完成
+func (s *listenService) OnInStock(fn func([]ListenItem)) {
+	s.mu.Lock()
+	s.onInStock = fn
+	s.mu.Unlock()
+}
+
+func (s *listenService) notifyChange() {
+	s.mu.Lock()
+	fn := s.onChange
+	s.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
+}
+
+// SetStatus 设置开始 / 暂停
+func (s *listenService) SetStatus(status string) {
+	s.mu.Lock()
+	changed := s.status != status
+	s.status = status
+	fn := s.onStatus
+	s.mu.Unlock()
+	if changed && fn != nil {
+		fn(status)
+	}
+}
+
+// GetStatus 当前开始 / 暂停状态
+func (s *listenService) GetStatus() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.status
+}
 
-	if s.items[uniqKey].Store.StoreNumber == "" {
-		s.items[uniqKey] = ListenItem{
+// SetIntervalMs 设置查询间隔（毫秒）
+func (s *listenService) SetIntervalMs(ms int) {
+	s.mu.Lock()
+	s.intervalMs = ms
+	s.mu.Unlock()
+}
+
+// IntervalDuration 当前查询间隔，未设置或非法时回退默认值
+func (s *listenService) IntervalDuration() time.Duration {
+	s.mu.Lock()
+	ms := s.intervalMs
+	s.mu.Unlock()
+	if ms <= 0 {
+		ms = DefaultIntervalMs
+	}
+	return time.Duration(ms) * time.Millisecond
+}
+
+// SetPushUrls 设置手机推送地址
+func (s *listenService) SetPushUrls(urls string) {
+	s.mu.Lock()
+	s.pushUrls = urls
+	s.mu.Unlock()
+}
+
+// PushUrls 手机推送地址
+func (s *listenService) PushUrls() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pushUrls
+}
+
+// SetStopOnHit 有货后是否暂停监听
+func (s *listenService) SetStopOnHit(stop bool) {
+	s.mu.Lock()
+	s.stopOnHit = stop
+	s.mu.Unlock()
+}
+
+// Add 按地区、门店名、型号名添加监听项，已存在时忽略。返回是否新增
+func (s *listenService) Add(areaTitle string, storeTitle string, productTitle string) bool {
+	area := Area.GetArea(areaTitle)
+	store := Store.GetStore(areaTitle, storeTitle)
+	product := Product.GetProduct(areaTitle, productTitle)
+	return s.AddItem(area, store, product)
+}
+
+// AddItem 添加监听项，已存在时忽略。返回是否新增
+func (s *listenService) AddItem(area model.Area, store model.Store, product model.Product) bool {
+	key := ItemKey(store, product)
+
+	s.mu.Lock()
+	_, exists := s.items[key]
+	if !exists {
+		s.items[key] = ListenItem{
+			Area:    area,
 			Store:   store,
 			Product: product,
 			Status:  StatusWait,
 		}
 	}
+	s.mu.Unlock()
 
-	s.updateLogStrLocked()
+	if !exists {
+		s.notifyChange()
+	}
+	return !exists
 }
 
-func (s *listenService) Clean() {
+// Remove 删除一项
+func (s *listenService) Remove(key string) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.items = map[string]ListenItem{}
-	s.updateLogStrLocked()
+	delete(s.items, key)
+	s.mu.Unlock()
+	s.notifyChange()
 }
 
-func (s *listenService) SetListenItems(items map[string]ListenItem) {
+// SetDisabled 临时停用 / 恢复一项。停用的项保留在列表里，但不参与查询
+func (s *listenService) SetDisabled(key string, disabled bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.items = map[string]ListenItem{}
-	for key, item := range items {
+	item, ok := s.items[key]
+	if ok {
+		item.Disabled = disabled
+		if disabled {
+			item.Status = StatusDisabled
+		} else {
+			item.Status = StatusWait
+		}
 		s.items[key] = item
 	}
-	s.updateLogStrLocked()
+	s.mu.Unlock()
+	if ok {
+		s.notifyChange()
+	}
+}
+
+// Clean 清空全部监听项
+func (s *listenService) Clean() {
+	s.mu.Lock()
+	s.items = map[string]ListenItem{}
+	s.mu.Unlock()
+	s.notifyChange()
+}
+
+// SetListenItems 用保存的配置恢复监听列表。fallbackArea 用于补全旧版配置里缺失的地区
+func (s *listenService) SetListenItems(items map[string]ListenItem, fallbackArea model.Area) {
+	s.mu.Lock()
+	s.items = map[string]ListenItem{}
+	for key, item := range items {
+		if item.Area.Locale == "" {
+			item.Area = fallbackArea
+		}
+		s.items[key] = item
+	}
+	s.mu.Unlock()
+	s.notifyChange()
 }
 
 // GetListenItems 返回监听项的副本，调用方可放心遍历或序列化
@@ -197,411 +270,179 @@ func (s *listenService) GetListenItems() map[string]ListenItem {
 	return items
 }
 
-func (s *listenService) UpdateLogStr() {
+// Counts 监听项总数与其中启用的数量
+func (s *listenService) Counts() (total int, active int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.updateLogStrLocked()
-}
-
-// sortedKeysLocked 按门店、型号排序，避免列表每轮刷新顺序乱跳
-func (s *listenService) sortedKeysLocked() []string {
-	keys := make([]string, 0, len(s.items))
-	for key := range s.items {
-		keys = append(keys, key)
-	}
-	sort.Slice(keys, func(i, j int) bool {
-		a, b := s.items[keys[i]], s.items[keys[j]]
-		if a.Store.CityStoreName != b.Store.CityStoreName {
-			return a.Store.CityStoreName < b.Store.CityStoreName
+	for _, item := range s.items {
+		total++
+		if !item.Disabled {
+			active++
 		}
-		return a.Product.Title < b.Product.Title
-	})
-	return keys
-}
-
-func (s *listenService) updateLogStrLocked() {
-	var str string
-
-	for _, key := range s.sortedKeysLocked() {
-		item := s.items[key]
-
-		str += fmt.Sprintf(
-			"[%s] %s %s %s %s",
-			item.Status,
-			item.Time,
-			item.Store.CityStoreName,
-			item.Product.Title,
-			"\n",
-		)
 	}
-
-	s.Logs.SetText(str)
+	return total, active
 }
 
-func (s *listenService) UpdateStatus(uniqKey string, status string) {
+// areaOrder 地区在 model.Areas 里的顺序，用于排序
+func areaOrder(area model.Area) int {
+	for i, a := range model.Areas {
+		if a.Locale == area.Locale {
+			return i
+		}
+	}
+	return len(model.Areas)
+}
+
+func lessItem(a, b ListenItem) bool {
+	if oa, ob := areaOrder(a.Area), areaOrder(b.Area); oa != ob {
+		return oa < ob
+	}
+	if a.Store.CityStoreName != b.Store.CityStoreName {
+		return a.Store.CityStoreName < b.Store.CityStoreName
+	}
+	return a.Product.Title < b.Product.Title
+}
+
+// Rows 按地区、门店、型号排序的监听项，避免列表每轮刷新顺序乱跳
+func (s *listenService) Rows() []Row {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.updateStatusLocked(uniqKey, status)
+	return s.rowsLocked()
 }
 
-func (s *listenService) updateStatusLocked(uniqKey string, status string) {
-	item, exists := s.items[uniqKey]
-	if !exists {
-		// 查询期间被清空或删除的项不再写回
-		return
+func (s *listenService) rowsLocked() []Row {
+	rows := make([]Row, 0, len(s.items))
+	for key, item := range s.items {
+		rows = append(rows, Row{Key: key, Item: item})
 	}
-	item.Time = carbon.DateTime{Carbon: carbon.Now(carbon.Shanghai)}
-	item.Status = status
-	s.items[uniqKey] = item
+	sort.Slice(rows, func(i, j int) bool { return lessItem(rows[i].Item, rows[j].Item) })
+	return rows
 }
 
-// IntervalDuration 当前查询间隔，未设置或非法时回退默认值
-func (s *listenService) IntervalDuration() time.Duration {
-	ms, err := s.IntervalMs.Get()
-	if err != nil || ms <= 0 {
-		ms = DefaultIntervalMs
+// RunOnce 立即查询一轮，供命令行版的单次模式使用
+func (s *listenService) RunOnce() {
+	s.tick()
+}
+
+// tick 查询一轮库存并更新状态，返回本轮结果。有货时记录历史、推送并回调 OnInStock
+func (s *listenService) tick() skuFetch {
+	var active []ListenItem
+	for _, row := range s.Rows() {
+		if !row.Item.Disabled {
+			active = append(active, row.Item)
+		}
 	}
-	return time.Duration(ms) * time.Millisecond
-}
+	if len(active) == 0 {
+		return newSkuFetch()
+	}
 
-func (s *listenService) Run() {
-	s.Status.Set(Pause)
+	result := queryItems(active)
+	now := carbon.DateTime{Carbon: carbon.Now(carbon.Shanghai)}
 
-	go func() {
-		for {
-			items := s.GetListenItems()
-			if stats, ok := s.Status.Get(); ok == nil && stats == Running && len(items) > 0 {
-				result := s.groupByStore(items)
-
-				// 同一轮可能多项同时有货，全部收集后一起提醒，避免漏报
-				failedStatus := StatusFailed
-				if result.storeClosed {
-					failedStatus = StatusStoreClosed
-				}
-
-				var hits []string
-				s.mu.Lock()
-				for _, key := range s.sortedKeysLocked() {
-					item := s.items[key]
-					status, ok := result.skus[item.Store.StoreNumber+"."+item.Product.Code]
-					switch {
-					case !ok:
-						status := failedStatus
-						if reason := result.failures[item.Store.StoreNumber]; reason != "" && !result.storeClosed {
-							status += "：" + reason
-						}
-						s.updateStatusLocked(key, status)
-					case status:
-						s.updateStatusLocked(key, StatusInStock)
-						hits = append(hits, fmt.Sprintf("%s %s", item.Store.CityStoreName, item.Product.Title))
-					default:
-						s.updateStatusLocked(key, StatusOutStock)
-					}
-				}
-				s.updateLogStrLocked()
-				s.mu.Unlock()
-
-				if len(hits) > 0 {
-					s.Status.Set(Pause)
-					s.alertInStock(hits)
-				}
-
-				interval := s.IntervalDuration()
-				// 商店封面期间不退避，开放后第一时间查到；其他拦截多半是限流，放慢一点
-				if result.blocked && !result.storeClosed && interval < blockedBackoff {
-					interval = blockedBackoff
-				}
-				time.Sleep(withJitter(interval))
-				continue
+	var hits []ListenItem
+	s.mu.Lock()
+	stopOnHit := s.stopOnHit
+	for _, row := range s.rowsLocked() {
+		item := row.Item
+		if item.Disabled {
+			continue
+		}
+		previous := item.Status
+		available, ok := result.skus[ItemKey(item.Store, item.Product)]
+		switch {
+		case !ok && result.closed[item.Store.StoreNumber]:
+			item.Status = StatusStoreClosed
+		case !ok:
+			item.Status = StatusFailed
+			if reason := result.failures[item.Store.StoreNumber]; reason != "" {
+				item.Status += "：" + reason
 			}
-
-			time.Sleep(idleInterval)
+		case available:
+			item.Status = StatusInStock
+			// 持续监听时只在「变成有货」那一刻提醒，否则每轮都会重复推送
+			if stopOnHit || previous != StatusInStock {
+				hits = append(hits, item)
+			}
+		default:
+			item.Status = StatusOutStock
 		}
-	}()
-}
-
-type skuFetch struct {
-	skus    map[string]bool
-	blocked bool
-	// failures 查询失败的门店及原因（门店号 -> 原因），显示在监听列表里
-	failures map[string]string
-	// storeClosed 命中了预购前的商店封面页
-	storeClosed bool
-}
-
-var storeCoverRe = regexp.MustCompile(`"cv"\s*:\s*"preorder"`)
-
-// alertInStock 打开购物车并通过弹窗、系统通知、提示音、Bark 提醒
-func (s *listenService) alertInStock(hits []string) {
-	bagUrl := s.BagURL()
-	s.openBrowser(bagUrl)
-
-	msg := strings.Join(hits, "\n") + "\n有货"
-	title := "有货提醒"
-	if len(hits) > 1 {
-		title = fmt.Sprintf("有货提醒（%d 项）", len(hits))
+		item.Time = now
+		s.items[row.Key] = item
 	}
-	dialog.ShowInformation("匹配成功", msg, view.Window)
-	notify.Send(title, msg)
-	go s.AlertMp3()
-	go s.SendPush(title, msg, bagUrl)
-}
+	onInStock := s.onInStock
+	s.mu.Unlock()
 
-// withJitter 给间隔叠加 ±jitterRatio 的随机抖动
-func withJitter(d time.Duration) time.Duration {
-	if d <= 0 {
-		return d
-	}
-	delta := float64(d) * jitterRatio
-	return time.Duration(float64(d) - delta + rand.Float64()*2*delta)
-}
+	s.notifyChange()
 
-func (s *listenService) groupByStore(items map[string]ListenItem) skuFetch {
-	result := skuFetch{skus: map[string]bool{}, failures: map[string]string{}}
-
-	defer func() {
-		if r := recover(); r != nil {
-			log.Println(r)
+	if len(hits) > 0 {
+		if stopOnHit {
+			s.SetStatus(Pause)
 		}
-	}()
-
-	group := map[string][]ListenItem{}
-	for _, item := range items {
-		group[item.Store.StoreNumber] = append(group[item.Store.StoreNumber], item)
-	}
-
-	// pickup-message 每次最多返回 maxPartsPerRequest 个型号，超出的分批请求
-	type batch struct {
-		storeNumber string
-		items       []ListenItem
-	}
-	var batches []batch
-	for storeNumber, items := range group {
-		for start := 0; start < len(items); start += maxPartsPerRequest {
-			end := min(start+maxPartsPerRequest, len(items))
-			batches = append(batches, batch{storeNumber, items[start:end]})
+		if _, err := RecordHistory(hits, time.Now()); err != nil {
+			log.Println("记录有货历史失败:", err)
 		}
-	}
-
-	count := len(batches)
-	if count < 1 {
-		return result
-	}
-
-	ch := make(chan skuFetch, count)
-	sem := make(chan struct{}, maxConcurrentRequests)
-	for _, b := range batches {
-		link := s.fulfillmentURL(b.storeNumber, b.items)
-		referer := productBuyURL(s.Area, b.items[0].Product)
-		go func(storeNumber string) {
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			s.getSkuByLink(ch, storeNumber, link, referer)
-		}(b.storeNumber)
-	}
-
-	for i := 0; i < count; i++ {
-		part := <-ch
-		if part.blocked {
-			result.blocked = true
-		}
-		if part.storeClosed {
-			result.storeClosed = true
-		}
-		for key, v := range part.skus {
-			result.skus[key] = v
-		}
-		for storeNumber, reason := range part.failures {
-			result.failures[storeNumber] = reason
+		title, msg := HitMessage(hits)
+		go s.SendPush(title, msg, BagURL(hits[0].Area))
+		if onInStock != nil {
+			onInStock(hits)
 		}
 	}
 
 	return result
 }
 
-func (s *listenService) fulfillmentURL(storeNumber string, items []ListenItem) string {
-	var b strings.Builder
-	b.WriteString(s.Area.ShopOrigin())
-	b.WriteString("/shop/retail/pickup-message?little=true&store=")
-	b.WriteString(storeNumber)
-
-	for index, item := range items {
-		b.WriteString("&parts.")
-		b.WriteString(strconv.Itoa(index))
-		b.WriteByte('=')
-		b.WriteString(item.Product.Code)
+// HitMessage 有货提醒的标题和正文
+func HitMessage(hits []ListenItem) (string, string) {
+	multiArea := false
+	for _, hit := range hits {
+		if hit.Area.Locale != hits[0].Area.Locale {
+			multiArea = true
+		}
 	}
 
-	return b.String()
+	lines := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		line := fmt.Sprintf("%s %s", hit.Store.CityStoreName, hit.Product.Title)
+		if multiArea {
+			line = hit.Area.Title + " " + line
+		}
+		lines = append(lines, line)
+	}
+
+	title := "有货提醒"
+	if len(hits) > 1 {
+		title = fmt.Sprintf("有货提醒（%d 项）", len(hits))
+	}
+	return title, strings.Join(lines, "\n") + "\n有货"
 }
 
-func familyPath(familyType string) string {
-	switch familyType {
-	case "iphone18pro", "iphone18promax":
-		return "iphone-18-pro"
-	case "iphoneduo":
-		return "iphone-duo"
-	case "iphoneair":
-		return "iphone-air"
-	case "iphone17":
-		return "iphone-17"
-	default:
-		if strings.HasPrefix(familyType, "iphone") {
-			return "iphone-" + strings.TrimPrefix(familyType, "iphone")
-		}
-		return familyType
+// nextDelay 根据本轮结果计算下一轮的等待时间
+func (s *listenService) nextDelay(result skuFetch) time.Duration {
+	interval := s.IntervalDuration()
+	// 商店封面期间不退避，开放后第一时间查到；其他拦截多半是限流，放慢一点
+	if result.blocked && !result.storeClosed() && interval < blockedBackoff {
+		interval = blockedBackoff
 	}
+	return withJitter(interval)
 }
 
-func productBuyURL(area model.Area, product model.Product) string {
-	return fmt.Sprintf("%s/shop/buy-iphone/%s/%s", area.ShopOrigin(), familyPath(product.Type), strings.ToLower(product.Code))
-}
-
-func fulfillmentAvailable(availability gjson.Result) bool {
-	if availability.Get("pickupDisplay").String() == "available" {
-		return true
-	}
-	if availability.Get("messageTypes.regular.storeSelectionEnabled").Bool() {
-		return true
-	}
-	return availability.Get("messageTypes.compact.storeSelectionEnabled").Bool()
-}
-
-func (s *listenService) getSkuByLink(ch chan skuFetch, storeNumber string, skUrl string, referer string) {
-	result := skuFetch{skus: map[string]bool{}, failures: map[string]string{}}
-
-	warmupShopPage(referer, s.Area.AcceptLanguage())
-
-	resp, err := shopHTTP().R().
-		SetHeader("accept", "*/*").
-		SetHeader("accept-language", s.Area.AcceptLanguage()).
-		SetHeader("cache-control", "no-cache").
-		SetHeader("pragma", "no-cache").
-		SetHeader("referer", referer).
-		SetHeader("sec-fetch-dest", "empty").
-		SetHeader("sec-fetch-mode", "cors").
-		SetHeader("sec-fetch-site", "same-origin").
-		Get(skUrl)
-	if err != nil {
-		log.Println(err)
-		result.failures[storeNumber] = "网络错误"
-		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "timeout") {
-			result.failures[storeNumber] = "请求超时"
-		}
-		ch <- result
-		return
-	}
-
-	body := resp.String()
-	log.Println(resp.GetStatusCode(), skUrl)
-
-	if resp.GetStatusCode() == 541 || resp.GetStatusCode() >= 400 {
-		result.blocked = true
-		result.storeClosed = storeCoverRe.MatchString(body)
-		result.failures[storeNumber] = fmt.Sprintf("HTTP %d", resp.GetStatusCode())
-		resetShopSession()
-		preview := body
-		if len(preview) > 160 {
-			preview = preview[:160]
-		}
-		log.Println("fulfillment blocked", preview)
-		ch <- result
-		return
-	}
-
-	stores := gjson.Get(body, "body.stores")
-	if !stores.Exists() || stores.Get("#").Int() == 0 {
-		stores = gjson.Get(body, "body.content.pickupMessage.stores")
-	}
-	if !stores.Exists() || stores.Get("#").Int() == 0 {
-		preview := body
-		if len(preview) > 200 {
-			preview = preview[:200]
-		}
-		log.Println("fulfillment unexpected body", preview)
-		result.failures[storeNumber] = "响应中没有库存数据"
-		if msg := gjson.Get(body, "body.errorMessage").String(); msg != "" {
-			result.failures[storeNumber] = msg
-			if strings.Contains(msg, "no store associated") {
-				result.failures[storeNumber] = "门店编号已失效，请换一家门店"
+// Run 启动监听协程。状态为「监听中」且有启用的监听项时按频率查询
+func (s *listenService) Run() {
+	go func() {
+		for {
+			if _, active := s.Counts(); s.GetStatus() == Running && active > 0 {
+				result := s.tick()
+				time.Sleep(s.nextDelay(result))
+				continue
 			}
+			time.Sleep(idleInterval)
 		}
-		ch <- result
-		return
-	}
-
-	for _, store := range stores.Array() {
-		for productCode, availability := range store.Get("partsAvailability").Map() {
-			uniqKey := fmt.Sprintf("%s.%s", store.Get("storeNumber").String(), productCode)
-			result.skus[uniqKey] = fulfillmentAvailable(availability)
-		}
-	}
-
-	ch <- result
+	}()
 }
 
-// 型号对应预约地址
-//func (s *listenService) model2Url(productType string) string {
-//	// https://www.apple.com.cn/shop/buy-iphone/iphone-16
-//	// https://www.apple.com.cn/shop/buy-iphone/iphone-16-pro
-//
-//	var t string
-//	switch productType {
-//	case "iphone16promax", "iphone16pro":
-//		t = "iphone-16-pro"
-//	case "iphone16":
-//		t = "iphone-16"
-//	}
-//
-//	return fmt.Sprintf(
-//		"https://www.apple.com/%s/shop/buy-iphone/%s",
-//		s.Area.ShortCode,
-//		t,
-//	)
-//}
-
-// BagURL 当前地区购物袋地址
-func (s *listenService) BagURL() string {
-	return fmt.Sprintf("%s/shop/bag", s.Area.ShopOrigin())
-}
-
-// OpenBag 用默认浏览器打开当前地区购物袋，与有货时的行为一致
-func (s *listenService) OpenBag() {
-	s.openBrowser(s.BagURL())
-}
-
-func (s *listenService) openBrowser(link string) {
-	parse, err := url.Parse(link)
-	if err != nil {
-		dialog.ShowError(err, view.Window)
-		return
-	}
-
-	err = view.App.OpenURL(parse)
-	if err != nil {
-		dialog.ShowError(err, view.Window)
-		return
-	}
-}
-
-func (s *listenService) AlertMp3() {
-	reader := bytes.NewReader(theme.Mp3().Content())
-	streamer, _, err := mp3.Decode(ioutil.NopCloser(reader))
-	if err != nil {
-		panic(err)
-	}
-	defer streamer.Close()
-
-	done := make(chan bool)
-	speaker.Play(beep.Seq(streamer, beep.Callback(func() {
-		done <- true
-	})))
-	<-done
-}
-
-// SendPush 推送到所有已配置的手机推送地址。失败只记日志，不影响弹窗、提示音和打开购物车
+// SendPush 推送到所有已配置的手机推送地址。失败只记日志，不影响其他提醒方式
 func (s *listenService) SendPush(title string, content string, link string) []PushResult {
-	results := Push(s.PushUrls, PushMessage{Title: title, Content: content, URL: link})
+	results := Push(s.PushUrls(), PushMessage{Title: title, Content: content, URL: link})
 	for _, r := range results {
 		if r.Err != nil {
 			log.Printf("推送失败 [%s] %s: %v", r.Channel, MaskTarget(r.Target), r.Err)
