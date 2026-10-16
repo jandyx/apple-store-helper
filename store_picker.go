@@ -9,6 +9,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -26,6 +27,12 @@ func newStorePicker(options []string) *storePicker {
 	p.Button = widget.NewButton(storePickerPlaceHolder, p.showDialog)
 	p.Button.Alignment = widget.ButtonAlignLeading
 	return p
+}
+
+// Widget 带下拉箭头的门店选择控件，外观与其他下拉框一致
+func (p *storePicker) Widget() fyne.CanvasObject {
+	arrow := container.NewPadded(widget.NewIcon(theme.MenuDropDownIcon()))
+	return container.NewStack(p.Button, container.NewBorder(nil, nil, nil, arrow))
 }
 
 // SetOptions 切换地区时更新可选门店，并清空已选

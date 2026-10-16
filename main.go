@@ -85,29 +85,31 @@ func main() {
 
 	loadUserSettingsCache(areaWidget, storeWidget, productWidget, barkWidget, intervalWidget)
 
-	barkRow := container.New(layout.NewFormLayout(), widget.NewLabel("Bark 通知地址"), barkWidget)
-	if !barkEnabled {
-		barkRow.Hide()
+	// 表单放在同一个 FormLayout 里，标签列宽度一致
+	formItems := []fyne.CanvasObject{
+		widget.NewLabel("选择地区:"), areaWidget,
+		widget.NewLabel("选择门店:"), storeWidget.Widget(),
+		widget.NewLabel("选择型号:"), productWidget,
 	}
+	if barkEnabled {
+		formItems = append(formItems, widget.NewLabel("Bark 通知地址:"), barkWidget)
+	}
+	formItems = append(formItems, widget.NewLabel("查询频率:"), intervalWidget)
 
-	// 初始化 GUI 窗口内容 (Initialize GUI)
-	view.Window.SetContent(container.NewVBox(
+	top := container.NewVBox(
 		widget.NewLabel(help),
-		container.New(layout.NewFormLayout(), widget.NewLabel("选择地区:"), areaWidget),
-		container.New(layout.NewFormLayout(), widget.NewLabel("选择门店:"), storeWidget.Button),
-		container.New(layout.NewFormLayout(), widget.NewLabel("选择型号:"), productWidget),
-		barkRow,
-		container.New(layout.NewFormLayout(), widget.NewLabel("查询频率:"), intervalWidget),
-
+		container.New(layout.NewFormLayout(), formItems...),
 		container.NewBorder(nil, nil,
 			createActionButtons(areaWidget, storeWidget, productWidget, barkWidget, intervalWidget),
 			createControlButtons(),
 		),
+		widget.NewSeparator(),
+		widget.NewLabelWithStyle("监听列表", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
+	)
 
-		services.Listen.Logs,
-		layout.NewSpacer(),
-		createVersionLabel(),
-	))
+	// 初始化 GUI 窗口内容 (Initialize GUI)：监听列表占满剩余空间，四周留白
+	content := container.NewBorder(top, createVersionLabel(), nil, nil, container.NewVScroll(services.Listen.Logs))
+	view.Window.SetContent(container.New(layout.NewCustomPaddedLayout(12, 8, 16, 16), content))
 
 	view.Window.Resize(fyne.NewSize(1000, 800))
 	view.Window.CenterOnScreen()
