@@ -1,0 +1,39 @@
+name: API health
+
+# 每天用真实接口检查各地区能否查到库存。接口被拦截或改版时程序界面不会报错，只能靠定时检查发现。
+# 检查失败时任务失败，GitHub 会按通知设置发邮件提醒。参考 dashug/apple-store-helper 的 api-health.yml。
+on:
+  schedule:
+    # 每天 UTC 01:30（北京时间 09:30），与数据更新错开
+    - cron: "30 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: 接口健康检查
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 检查库存接口
+        run: |
+          set +e
+          LIVE_CHECK=1 CGO_ENABLED=0 go test -count=1 -v -run TestLiveEndpointHealth ./services/ > /tmp/health.log 2>&1
+          code=$?
+          set -e
+          cat /tmp/health.log
+          {
+            if [ "$code" -eq 0 ]; then echo "## 接口正常"; else echo "## 接口健康检查未通过"; fi
+            echo
+            echo '```'
+            grep -E "live_health_test|接口健康检查|—" /tmp/health.log || tail -30 /tmp/health.log
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $code
