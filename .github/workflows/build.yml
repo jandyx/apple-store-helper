@@ -82,9 +82,43 @@ jobs:
           name: AppleStoreHelper-${{ matrix.name }}
           path: AppleStoreHelper-${{ matrix.name }}.zip
 
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # services 与命令行版不依赖图形库，无需 cgo 即可测试
+      - run: CGO_ENABLED=0 go test ./services/ ./cmd/...
+
+  cli:
+    runs-on: ubuntu-22.04
+    env:
+      LDFLAGS: -s -w -X apple-store-helper/common.VERSION=${{ github.ref_type == 'tag' && github.ref_name || 'dev' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build CLI
+        run: |
+          for target in linux/amd64 linux/arm64 darwin/arm64 darwin/amd64 windows/amd64; do
+            os=${target%/*}; arch=${target#*/}
+            name=apple-store-helper-cli; [ "$os" = windows ] && name=$name.exe
+            dir=out/$os-$arch; mkdir -p $dir
+            CGO_ENABLED=0 GOOS=$os GOARCH=$arch go build -ldflags "$LDFLAGS" -o $dir/$name ./cmd/apple-store-helper-cli
+            (cd $dir && zip -q ../../AppleStoreHelper-cli-$os-$arch.zip $name)
+          done
+          ls -la AppleStoreHelper-cli-*.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AppleStoreHelper-cli
+          path: AppleStoreHelper-cli-*.zip
+
   release:
     if: github.ref_type == 'tag'
-    needs: build
+    needs: [build, cli, test]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v4
