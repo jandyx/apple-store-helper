@@ -21,6 +21,8 @@ type multiPicker struct {
 	unit        string // 计数量词，如「家」「个」
 	options     []string
 	selected    []string
+	// display 选项的展示文字，选项本身仍作为保存与匹配的值；为空时原样展示
+	display func(string) string
 }
 
 func newMultiPicker(title string, placeHolder string, unit string, options []string) *multiPicker {
@@ -63,23 +65,45 @@ func (p *multiPicker) Selected() []string {
 	return p.selected
 }
 
+func (p *multiPicker) label(option string) string {
+	if p.display == nil {
+		return option
+	}
+	return p.display(option)
+}
+
+func (p *multiPicker) labels(options []string) []string {
+	out := make([]string, len(options))
+	for i, o := range options {
+		out[i] = p.label(o)
+	}
+	return out
+}
+
 func (p *multiPicker) refresh() {
-	switch n := len(p.selected); {
+	selected := p.labels(p.selected)
+	switch n := len(selected); {
 	case n == 0:
 		p.Button.SetText(p.placeHolder)
 	case n <= 3:
-		p.Button.SetText(strings.Join(p.selected, "、"))
+		p.Button.SetText(strings.Join(selected, "、"))
 	default:
-		p.Button.SetText(fmt.Sprintf("%s 等 %d %s", strings.Join(p.selected[:3], "、"), n, p.unit))
+		p.Button.SetText(fmt.Sprintf("%s 等 %d %s", strings.Join(selected[:3], "、"), n, p.unit))
 	}
 }
 
 func (p *multiPicker) showDialog() {
-	check := widget.NewCheckGroup(p.options, nil)
-	check.SetSelected(append([]string(nil), p.selected...))
+	// 勾选框显示展示文字，确定时换回选项值
+	byLabel := map[string]string{}
+	for _, o := range p.options {
+		byLabel[p.label(o)] = o
+	}
+	all := p.labels(p.options)
+	check := widget.NewCheckGroup(all, nil)
+	check.SetSelected(p.labels(p.selected))
 
 	tools := container.NewHBox(
-		widget.NewButton("全选", func() { check.SetSelected(append([]string(nil), p.options...)) }),
+		widget.NewButton("全选", func() { check.SetSelected(append([]string(nil), all...)) }),
 		widget.NewButton("全不选", func() { check.SetSelected(nil) }),
 	)
 	scroll := container.NewVScroll(check)
@@ -87,7 +111,11 @@ func (p *multiPicker) showDialog() {
 
 	d := dialog.NewCustomConfirm(p.title, "确定", "取消", container.NewBorder(tools, nil, nil, nil, scroll), func(ok bool) {
 		if ok {
-			p.SetSelected(check.Selected)
+			values := make([]string, 0, len(check.Selected))
+			for _, l := range check.Selected {
+				values = append(values, byLabel[l])
+			}
+			p.SetSelected(values)
 		}
 	}, view.Window)
 	d.Show()

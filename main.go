@@ -33,6 +33,7 @@ var (
 	productWidget  *multiPicker
 	pushWidget     *widget.Entry
 	intervalWidget *widget.SelectEntry
+	keepGoingCheck *widget.Check
 	// settingsLoaded 配置恢复完成前不落盘，避免恢复过程中的 OnChanged 把半成品写回文件
 	settingsLoaded bool
 )
@@ -57,6 +58,7 @@ func main() {
 
 	// 型号选择器 (Product Selector)
 	productWidget = newMultiPicker("选择型号", "请选择 iPhone 型号（可多选）", "个", services.Product.ByAreaTitleForOptions(defaultArea))
+	productWidget.display = services.TitleName
 
 	// 手机推送地址，每行一个，按域名自动识别渠道
 	pushWidget = widget.NewMultiLineEntry()
@@ -102,9 +104,25 @@ func main() {
 		statusBinding.Set(status)
 	})
 	services.Listen.OnInStock(alertInStock)
+	services.Listen.OnWarning(func(title, msg string) {
+		dialog.ShowInformation(title, msg, view.Window)
+		notify.Send(title, msg)
+	})
+
+	// 有货后继续监听：打开后有货不暂停，只在某项变成有货时提醒
+	keepGoingCheck = widget.NewCheck("有货后继续监听", func(checked bool) {
+		services.Listen.SetStopOnHit(!checked)
+		saveSettings()
+	})
 
 	list := newListenList()
-	services.Listen.OnChange(list.Refresh)
+	banner := newWarningBanner()
+	statusBar := newStatusBar()
+	services.Listen.OnChange(func() {
+		list.Refresh()
+		banner.Update(services.Listen.Stats())
+		statusBar.refresh()
+	})
 
 	loadUserSettingsCache()
 
@@ -123,14 +141,13 @@ func main() {
 		container.NewBorder(nil, nil, createActionButtons(), createControlButtons(statusBinding)),
 		container.NewBorder(nil, nil, createCheckButtons(), createToolButtons()),
 		widget.NewSeparator(),
-		container.NewBorder(nil, nil,
-			widget.NewLabelWithStyle("监听列表", fyne.TextAlignLeading, fyne.TextStyle{Bold: true}),
-			nil,
-		),
+		list.Header(),
+		banner.box,
 	)
 
 	// 初始化 GUI 窗口内容 (Initialize GUI)：监听列表占满剩余空间，四周留白
-	content := container.NewBorder(top, createVersionLabel(), nil, nil, list.Widget())
+	bottom := container.NewBorder(nil, nil, nil, widget.NewLabel("version: "+common.VERSION), statusBar.label)
+	content := container.NewBorder(top, bottom, nil, nil, list.Widget())
 	view.Window.SetContent(container.New(layout.NewCustomPaddedLayout(12, 8, 16, 16), content))
 
 	view.Window.Resize(fyne.NewSize(1000, 820))
@@ -176,6 +193,7 @@ func loadUserSettingsCache() {
 	services.Listen.SetListenItems(settings.ListenItems, services.Area.GetArea(settings.SelectedArea))
 	pushWidget.SetText(settings.Pushes())
 	services.Listen.SetPushUrls(settings.Pushes())
+	keepGoingCheck.SetChecked(settings.KeepGoingOnHit)
 }
 
 // saveSettings 保存推送、频率与监听列表；门店和型号的勾选沿用上次「添加」时保存的值。
@@ -201,6 +219,7 @@ func saveSettingsWith(selections bool) {
 		PushUrls:         pushWidget.Text,
 		ListenIntervalMs: services.ParseIntervalLabel(intervalWidget.Text),
 		ListenItems:      services.Listen.GetListenItems(),
+		KeepGoingOnHit:   keepGoingCheck.Checked,
 	})
 	if err != nil {
 		log.Println("保存配置失败:", err)
@@ -308,6 +327,7 @@ func openLogDir() {
 // 创建控制按钮 (Create control buttons)
 func createControlButtons(status binding.String) *fyne.Container {
 	return container.NewHBox(
+		keepGoingCheck,
 		widget.NewButton("开始", func() {
 			services.Listen.SetStatus(services.Running)
 		}),
@@ -316,13 +336,5 @@ func createControlButtons(status binding.String) *fyne.Container {
 		}),
 		container.NewCenter(widget.NewLabel("状态:")),
 		container.NewCenter(widget.NewLabelWithData(status)),
-	)
-}
-
-// createVersionLabel 创建版本标签 (Create version label)
-func createVersionLabel() *fyne.Container {
-	return container.NewHBox(
-		layout.NewSpacer(),
-		widget.NewLabel("version: "+common.VERSION),
 	)
 }

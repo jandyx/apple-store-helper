@@ -5,8 +5,12 @@ import (
 	"io"
 	"log"
 	"net/url"
+	"strings"
 
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/widget"
 	"github.com/faiface/beep"
 	"github.com/faiface/beep/mp3"
 	"github.com/faiface/beep/speaker"
@@ -32,9 +36,24 @@ func alertInStock(hits []services.ListenItem) {
 	title, msg := services.HitMessage(hits)
 	// 窗口可能收在托盘里，先显示出来
 	showMainWindow()
-	dialog.ShowInformation("匹配成功", msg, view.Window)
+	showHitDialog(title, msg)
 	notify.Send(title, msg)
 	go alertMp3()
+}
+
+// showHitDialog 有货弹窗：左对齐，按门店分组；内容多时可滚动
+func showHitDialog(title, msg string) {
+	label := widget.NewLabel(msg + "\n\n购物车已在浏览器中打开，请尽快选择门店和取货时间下单。")
+	label.Wrapping = fyne.TextWrapWord
+	content := fyne.CanvasObject(label)
+	if strings.Count(msg, "\n") > 12 {
+		scroll := container.NewVScroll(label)
+		scroll.SetMinSize(fyne.NewSize(520, 360))
+		content = scroll
+	}
+	d := dialog.NewCustom(title, "知道了", content, view.Window)
+	d.Resize(fyne.NewSize(560, d.MinSize().Height))
+	d.Show()
 }
 
 func openBrowser(link string) {
