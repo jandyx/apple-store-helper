@@ -111,8 +111,14 @@ func main() {
 		statusBinding.Set(status)
 	})
 	services.Listen.OnInStock(alertInStock)
+	// 被拦截告警弹窗：查询恢复正常后自动关闭，避免过期的提示让人误以为仍被拦截
+	var warningDialog dialog.Dialog
 	services.Listen.OnWarning(func(title, msg string) {
-		dialog.ShowInformation(title, msg, view.Window)
+		if warningDialog != nil {
+			warningDialog.Hide()
+		}
+		warningDialog = dialog.NewInformation(title, msg, view.Window)
+		warningDialog.Show()
 		notify.Send(title, msg)
 	})
 
@@ -126,9 +132,14 @@ func main() {
 	banner := newWarningBanner()
 	statusBar := newStatusBar()
 	services.Listen.OnChange(func() {
+		stats := services.Listen.Stats()
 		list.Refresh()
-		banner.Update(services.Listen.Stats())
+		banner.Update(stats)
 		statusBar.refresh()
+		if warningDialog != nil && !stats.AllFailed {
+			warningDialog.Hide()
+			warningDialog = nil
+		}
 	})
 
 	loadUserSettingsCache()
