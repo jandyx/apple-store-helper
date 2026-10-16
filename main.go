@@ -2,6 +2,7 @@ package main
 
 import (
 	"apple-store-helper/common"
+	"apple-store-helper/notify"
 	"apple-store-helper/services"
 	"apple-store-helper/theme"
 	"apple-store-helper/view"
@@ -26,6 +27,7 @@ const barkEnabled = false
 func main() {
 	initMP3Player()
 	initFyneApp()
+	notify.Setup()
 
 	// 默认地区 (Default Area)
 	defaultArea := services.Listen.Area.Title

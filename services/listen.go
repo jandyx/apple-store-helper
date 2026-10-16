@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/data/binding"
 	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
@@ -24,6 +23,7 @@ import (
 	"github.com/tidwall/gjson"
 
 	"apple-store-helper/model"
+	"apple-store-helper/notify"
 	"apple-store-helper/theme"
 	"apple-store-helper/view"
 )
@@ -226,10 +226,7 @@ func (s *listenService) Run() {
 						s.openBrowser(bagUrl)
 						msg := fmt.Sprintf("%s %s 有货", item.Store.CityStoreName, item.Product.Title)
 						dialog.ShowInformation("匹配成功", msg, view.Window)
-						view.App.SendNotification(&fyne.Notification{
-							Title:   "有货提醒",
-							Content: msg,
-						})
+						notify.Send("有货提醒", msg)
 						go s.AlertMp3()
 						go s.SendPushNotificationByBark("有货提醒", msg, bagUrl)
 						break
