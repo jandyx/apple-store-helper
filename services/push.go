@@ -93,7 +93,8 @@ func buildPushRequest(target string, channel string, m PushMessage) (*http.Reque
 	case ChannelServerChan:
 		form := url.Values{
 			"title": []string{m.Title},
-			"desp":  []string{m.Content + "\n\n" + m.URL},
+			// desp 是 Markdown，裸地址在微信里不一定能点，写成链接；另附原地址方便复制
+			"desp": []string{m.Content + "\n\n[👉 打开购物车](" + m.URL + ")\n\n" + m.URL},
 		}
 		req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(form.Encode()))
 		if err != nil {

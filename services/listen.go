@@ -382,7 +382,7 @@ func (s *listenService) tick() skuFetch {
 			log.Println("记录有货历史失败:", err)
 		}
 		title, msg := HitMessage(hits)
-		go s.SendPush(title, msg, BagURL(hits[0].Area))
+		go s.SendPush(title, msg+bagLinks(hits), BagURL(hits[0].Area))
 		if onInStock != nil {
 			onInStock(hits)
 		}
@@ -414,6 +414,23 @@ func HitMessage(hits []ListenItem) (string, string) {
 		title = fmt.Sprintf("有货提醒（%d 项）", len(hits))
 	}
 	return title, strings.Join(lines, "\n") + "\n有货"
+}
+
+// bagLinks 命中跨地区时，在推送正文里附上其余地区的购物车地址；第一个地区的地址由各渠道的链接字段携带
+func bagLinks(hits []ListenItem) string {
+	seen := map[string]bool{BagURL(hits[0].Area): true}
+	var lines []string
+	for _, hit := range hits[1:] {
+		bag := BagURL(hit.Area)
+		if !seen[bag] {
+			seen[bag] = true
+			lines = append(lines, fmt.Sprintf("%s购物车：%s", hit.Area.Title, bag))
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "\n" + strings.Join(lines, "\n")
 }
 
 // nextDelay 根据本轮结果计算下一轮的等待时间

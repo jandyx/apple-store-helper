@@ -5,8 +5,11 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+
+	"apple-store-helper/model"
 )
 
 func TestDetectChannel(t *testing.T) {
@@ -106,5 +109,43 @@ func TestMaskTargetHidesKey(t *testing.T) {
 	masked := MaskTarget("https://api.day.app/AbCdEf0123456789FakeBarkKey")
 	if strings.Contains(masked, "456789FakeBark") {
 		t.Fatalf("key leaked: %s", masked)
+	}
+}
+
+func TestPushCarriesBagURL(t *testing.T) {
+	bag := "https://www.apple.com.cn/shop/bag"
+	m := PushMessage{Title: "有货提醒", Content: "天环 Duo\n有货", URL: bag}
+
+	for _, c := range []struct{ target, channel string }{
+		{"https://api.day.app/KEY", ChannelBark},
+		{"https://sctapi.ftqq.com/SCT.send", ChannelServerChan},
+		{"https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=k", ChannelWeCom},
+		{"https://api.telegram.org/bot1:x/sendMessage?chat_id=1", ChannelTelegram},
+		{"https://example.com/hook", ChannelWebhook},
+	} {
+		req, err := buildPushRequest(c.target, c.channel, m)
+		if err != nil {
+			t.Fatal(err)
+		}
+		payload := req.URL.String()
+		if req.Body != nil {
+			body, _ := io.ReadAll(req.Body)
+			payload += string(body)
+		}
+		decoded, _ := url.QueryUnescape(payload)
+		if !strings.Contains(payload, bag) && !strings.Contains(decoded, bag) {
+			t.Errorf("%s: bag url missing in %s", c.channel, payload)
+		}
+	}
+}
+
+func TestBagLinksForMultiArea(t *testing.T) {
+	cn, hk := ListenItem{Area: model.Areas[0]}, ListenItem{Area: model.Areas[1]}
+	if got := bagLinks([]ListenItem{cn, cn}); got != "" {
+		t.Errorf("same area should add nothing, got %q", got)
+	}
+	got := bagLinks([]ListenItem{cn, hk, hk})
+	if !strings.Contains(got, BagURL(model.Areas[1])) || strings.Count(got, "购物车") != 1 {
+		t.Errorf("unexpected multi-area links: %q", got)
 	}
 }
