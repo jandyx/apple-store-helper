@@ -89,8 +89,11 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      # services 与命令行版不依赖图形库，无需 cgo 即可测试
+      # services 与命令行版不依赖图形库，先在无 cgo 下测一遍，确认能在服务器上编译
       - run: CGO_ENABLED=0 go test ./services/ ./cmd/...
+      # 界面控件测试使用 fyne 的测试驱动，不需要显示器，但需要图形库头文件
+      - run: sudo apt-get update && sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev
+      - run: go test ./...
 
   cli:
     runs-on: ubuntu-22.04
