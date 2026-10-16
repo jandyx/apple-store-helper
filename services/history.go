@@ -99,7 +99,7 @@ func RecordHistory(items []ListenItem, at time.Time) (int, error) {
 			StoreNumber: item.Store.StoreNumber,
 			Store:       item.Store.CityStoreName,
 			ProductCode: item.Product.Code,
-			Product:     item.Product.Title,
+			Product:     ProductName(item.Product),
 		}}, entries...)
 		added++
 	}

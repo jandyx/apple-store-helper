@@ -82,19 +82,20 @@ func buildPushRequest(target string, channel string, m PushMessage) (*http.Reque
 	switch channel {
 	case ChannelBark:
 		// {地址}/{标题}/{正文}?url=...，标题与正文在 path 中必须转义
-		link := fmt.Sprintf("%s/%s/%s?%s",
+		link := fmt.Sprintf("%s/%s/%s",
 			strings.TrimRight(target, "/"),
 			url.PathEscape(m.Title),
 			url.PathEscape(m.Content),
-			url.Values{"url": []string{m.URL}}.Encode(),
 		)
+		if m.URL != "" {
+			link += "?" + url.Values{"url": []string{m.URL}}.Encode()
+		}
 		return http.NewRequest(http.MethodGet, link, nil)
 
 	case ChannelServerChan:
 		form := url.Values{
 			"title": []string{m.Title},
-			// desp 是 Markdown，裸地址在微信里不一定能点，写成链接；另附原地址方便复制
-			"desp": []string{m.Content + "\n\n[👉 打开购物车](" + m.URL + ")\n\n" + m.URL},
+			"desp":  []string{m.Content + serverChanLink(m.URL)},
 		}
 		req, err := http.NewRequest(http.MethodPost, target, strings.NewReader(form.Encode()))
 		if err != nil {
@@ -106,7 +107,7 @@ func buildPushRequest(target string, channel string, m PushMessage) (*http.Reque
 	case ChannelWeCom:
 		return jsonRequest(target, map[string]any{
 			"msgtype": "text",
-			"text":    map[string]string{"content": m.Title + "\n" + m.Content + "\n" + m.URL},
+			"text":    map[string]string{"content": plainText(m)},
 		})
 
 	case ChannelTelegram:
@@ -116,7 +117,7 @@ func buildPushRequest(target string, channel string, m PushMessage) (*http.Reque
 			return nil, err
 		}
 		query := parsed.Query()
-		query.Set("text", m.Title+"\n"+m.Content+"\n"+m.URL)
+		query.Set("text", plainText(m))
 		parsed.RawQuery = query.Encode()
 		return http.NewRequest(http.MethodGet, parsed.String(), nil)
 
@@ -127,6 +128,23 @@ func buildPushRequest(target string, channel string, m PushMessage) (*http.Reque
 			"url":     m.URL,
 		})
 	}
+}
+
+// plainText 纯文本渠道的正文：标题、内容和链接（有的话）
+func plainText(m PushMessage) string {
+	text := m.Title + "\n" + m.Content
+	if m.URL != "" {
+		text += "\n" + m.URL
+	}
+	return text
+}
+
+// serverChanLink Server酱的正文是 Markdown，裸地址在微信里不一定能点，写成链接；另附原地址方便复制
+func serverChanLink(link string) string {
+	if link == "" {
+		return ""
+	}
+	return "\n\n[👉 打开购物车](" + link + ")\n\n" + link
 }
 
 func jsonRequest(target string, payload any) (*http.Request, error) {

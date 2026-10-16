@@ -221,3 +221,52 @@ func TestHistoryDedupAndRanking(t *testing.T) {
 		t.Fatalf("unexpected ranking: %+v", ranks)
 	}
 }
+
+func TestBlockedWarningFiresOnceAndResets(t *testing.T) {
+	_, s := setupFakeApple(t)
+	addItem(s, model.Areas[0], "RBLOCK", "A1")
+
+	warnings := 0
+	s.OnWarning(func(title, msg string) {
+		warnings++
+		if !strings.Contains(msg, "HTTP 541") {
+			t.Errorf("warning should name the reason: %s", msg)
+		}
+	})
+
+	for i := 0; i < blockedWarnRounds+2; i++ {
+		s.tick()
+	}
+	stats := s.Stats()
+	if warnings != 1 {
+		t.Fatalf("warning should fire exactly once, got %d", warnings)
+	}
+	if !stats.AllFailed || stats.AllClosed || stats.FailedRounds != blockedWarnRounds+2 || stats.TopReason != "HTTP 541" {
+		t.Fatalf("unexpected stats: %+v", stats)
+	}
+	if stats.Counts[StatusFailed] != 1 || stats.LastCheck.IsZero() {
+		t.Fatalf("unexpected counts: %+v", stats)
+	}
+
+	// 恢复后清零，之后再次连续失败会重新提醒
+	addItem(s, model.Areas[0], "R639", "A2")
+	s.tick()
+	if got := s.Stats(); got.AllFailed || got.FailedRounds != 0 {
+		t.Fatalf("success should reset: %+v", got)
+	}
+}
+
+func TestStoreClosedDoesNotCountAsBlocked(t *testing.T) {
+	_, s := setupFakeApple(t)
+	addItem(s, model.Areas[1], "RCLOSED", "H1")
+
+	warnings := 0
+	s.OnWarning(func(string, string) { warnings++ })
+	for i := 0; i < blockedWarnRounds+1; i++ {
+		s.tick()
+	}
+	stats := s.Stats()
+	if warnings != 0 || !stats.AllClosed || stats.FailedRounds != 0 {
+		t.Fatalf("store closed should not warn: warnings=%d stats=%+v", warnings, stats)
+	}
+}

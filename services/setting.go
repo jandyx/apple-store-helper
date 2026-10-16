@@ -44,6 +44,8 @@ type UserSettings struct {
 	ListenInterval   int                   `json:"listen_interval"` // 旧版字段（秒），仅用于读取兼容
 	ListenIntervalMs int                   `json:"listen_interval_ms"`
 	ListenItems      map[string]ListenItem `json:"listen_items"`
+	// KeepGoingOnHit 有货后继续监听（默认有货即暂停）
+	KeepGoingOnHit bool `json:"keep_going_on_hit,omitempty"`
 }
 
 // 保存配置到本地文件 SaveSettings saves settings to a file

@@ -66,9 +66,13 @@ type listenService struct {
 	// stopOnHit 有货后暂停监听。图形界面需要（用户去下单），命令行版长期运行时关闭
 	stopOnHit bool
 
+	// stats 最近一轮的统计，用于状态栏和警示条
+	stats RoundStats
+
 	onChange  func()
 	onStatus  func(string)
 	onInStock func([]ListenItem)
+	onWarning func(title, msg string)
 }
 
 type ListenItem struct {
@@ -339,7 +343,7 @@ func (s *listenService) tick() skuFetch {
 	result := queryItems(active)
 	now := carbon.DateTime{Carbon: carbon.Now(carbon.Shanghai)}
 
-	var hits []ListenItem
+	var hits, checked []ListenItem
 	s.mu.Lock()
 	stopOnHit := s.stopOnHit
 	for _, row := range s.rowsLocked() {
@@ -368,11 +372,18 @@ func (s *listenService) tick() skuFetch {
 		}
 		item.Time = now
 		s.items[row.Key] = item
+		checked = append(checked, item)
 	}
 	onInStock := s.onInStock
+	onWarning := s.onWarning
+	warnTitle, warnMsg := s.recordRoundLocked(checked, time.Now())
 	s.mu.Unlock()
 
 	s.notifyChange()
+
+	if warnTitle != "" {
+		s.fireWarning(warnTitle, warnMsg, onWarning)
+	}
 
 	if len(hits) > 0 {
 		if stopOnHit {
@@ -391,29 +402,13 @@ func (s *listenService) tick() skuFetch {
 	return result
 }
 
-// HitMessage 有货提醒的标题和正文
+// HitMessage 有货提醒的标题和正文：按门店分组，同颜色的容量合并成一行
 func HitMessage(hits []ListenItem) (string, string) {
-	multiArea := false
-	for _, hit := range hits {
-		if hit.Area.Locale != hits[0].Area.Locale {
-			multiArea = true
-		}
-	}
-
-	lines := make([]string, 0, len(hits))
-	for _, hit := range hits {
-		line := fmt.Sprintf("%s %s", hit.Store.CityStoreName, hit.Product.Title)
-		if multiArea {
-			line = hit.Area.Title + " " + line
-		}
-		lines = append(lines, line)
-	}
-
 	title := "有货提醒"
 	if len(hits) > 1 {
 		title = fmt.Sprintf("有货提醒（%d 项）", len(hits))
 	}
-	return title, strings.Join(lines, "\n") + "\n有货"
+	return title, strings.Join(GroupHits(hits), "\n")
 }
 
 // bagLinks 命中跨地区时，在推送正文里附上其余地区的购物车地址；第一个地区的地址由各渠道的链接字段携带
@@ -449,9 +444,12 @@ func (s *listenService) Run() {
 		for {
 			if _, active := s.Counts(); s.GetStatus() == Running && active > 0 {
 				result := s.tick()
-				time.Sleep(s.nextDelay(result))
+				delay := s.nextDelay(result)
+				s.setNextCheck(time.Now().Add(delay))
+				time.Sleep(delay)
 				continue
 			}
+			s.setNextCheck(time.Time{})
 			time.Sleep(idleInterval)
 		}
 	}()

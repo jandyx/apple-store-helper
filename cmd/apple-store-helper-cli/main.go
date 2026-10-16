@@ -110,7 +110,7 @@ func run(opt options) error {
 	}
 	if opt.listProducts {
 		for _, product := range filterProducts(services.Area.ProductsByCode(area.Locale), opt.products) {
-			fmt.Printf("%-12s %s\n", product.Code, product.Title)
+			fmt.Printf("%-12s %s\n", product.Code, services.ProductName(product))
 		}
 		return nil
 	}
@@ -168,7 +168,7 @@ func run(opt options) error {
 	fmt.Printf("监听 %d 项（启用 %d），每 %s 查询一轮，手机推送 %d 个地址\n",
 		total, active, time.Duration(ms)*time.Millisecond, len(services.SplitPushTargets(pushText)))
 	for _, row := range listen.Rows() {
-		fmt.Printf("  %s  %s  %s\n", row.Item.Area.Title, row.Item.Store.CityStoreName, row.Item.Product.Title)
+		fmt.Printf("  %s  %s  %s\n", row.Item.Area.Title, row.Item.Store.CityStoreName, services.ProductName(row.Item.Product))
 	}
 
 	if opt.once {
@@ -185,6 +185,9 @@ func run(opt options) error {
 		case hit <- struct{}{}:
 		default:
 		}
+	})
+	listen.OnWarning(func(title, msg string) {
+		fmt.Printf("\a%s %s：%s\n", now(), title, msg)
 	})
 	printer := newChangePrinter()
 	listen.OnChange(func() { printer.print(listen.Rows()) })
@@ -290,7 +293,7 @@ func now() string {
 
 func printRows(rows []services.Row) {
 	for _, row := range rows {
-		fmt.Printf("[%s] %s %s %s\n", row.Item.Status, row.Item.Area.Title, row.Item.Store.CityStoreName, row.Item.Product.Title)
+		fmt.Printf("[%s] %s %s %s\n", row.Item.Status, row.Item.Area.Title, row.Item.Store.CityStoreName, services.ProductName(row.Item.Product))
 	}
 }
 
@@ -328,7 +331,7 @@ func (p *changePrinter) print(rows []services.Row) {
 		counts[strings.SplitN(status, "：", 2)[0]]++
 		if p.last[row.Key] != status {
 			if status != services.StatusWait {
-				fmt.Printf("%s [%s] %s %s %s\n", now(), status, row.Item.Area.Title, row.Item.Store.CityStoreName, row.Item.Product.Title)
+				fmt.Printf("%s [%s] %s %s %s\n", now(), status, row.Item.Area.Title, row.Item.Store.CityStoreName, services.ProductName(row.Item.Product))
 			}
 			p.last[row.Key] = status
 		}
