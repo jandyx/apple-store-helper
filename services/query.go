@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -16,8 +17,14 @@ import (
 	"apple-store-helper/model"
 )
 
-// shopOrigin 站点根地址，测试中替换成本地服务
-var shopOrigin = func(area model.Area) string { return area.ShopOrigin() }
+// shopOrigin 站点根地址，测试中替换成本地服务。
+// 设置环境变量 ASH_SHOP_ORIGIN（如 http://127.0.0.1:8765）可把库存查询指向本地模拟服务，用于演练有货提醒
+var shopOrigin = func(area model.Area) string {
+	if origin := os.Getenv("ASH_SHOP_ORIGIN"); origin != "" {
+		return strings.TrimRight(origin, "/") + "/" + area.ShortCode
+	}
+	return area.ShopOrigin()
+}
 
 // storeCoverRe 开售前 Apple 会把整个商店切到预购封面页，页面里带有这个标记
 var storeCoverRe = regexp.MustCompile(`"cv"\s*:\s*"preorder"`)
