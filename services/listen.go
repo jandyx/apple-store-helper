@@ -36,6 +36,8 @@ const (
 	StatusWait     = "等待"
 	// StatusFailed 本轮没拿到该项结果（被拦截、超时或接口返回异常），不能当作无货
 	StatusFailed = "查询失败"
+	// StatusStoreClosed 开售前 Apple 会把整个商店切到预购封面页，所有接口返回 503，开放后自动恢复
+	StatusStoreClosed = "商店维护中"
 
 	Pause   = "暂停"
 	Running = "监听中"
@@ -267,6 +269,11 @@ func (s *listenService) Run() {
 				result := s.groupByStore(items)
 
 				// 同一轮可能多项同时有货，全部收集后一起提醒，避免漏报
+				failedStatus := StatusFailed
+				if result.storeClosed {
+					failedStatus = StatusStoreClosed
+				}
+
 				var hits []string
 				s.mu.Lock()
 				for _, key := range s.sortedKeysLocked() {
@@ -274,7 +281,7 @@ func (s *listenService) Run() {
 					status, ok := result.skus[item.Store.StoreNumber+"."+item.Product.Code]
 					switch {
 					case !ok:
-						s.updateStatusLocked(key, StatusFailed)
+						s.updateStatusLocked(key, failedStatus)
 					case status:
 						s.updateStatusLocked(key, StatusInStock)
 						hits = append(hits, fmt.Sprintf("%s %s", item.Store.CityStoreName, item.Product.Title))
@@ -291,7 +298,8 @@ func (s *listenService) Run() {
 				}
 
 				interval := s.IntervalDuration()
-				if result.blocked && interval < blockedBackoff {
+				// 商店封面期间不退避，开放后第一时间查到；其他拦截多半是限流，放慢一点
+				if result.blocked && !result.storeClosed && interval < blockedBackoff {
 					interval = blockedBackoff
 				}
 				time.Sleep(interval)
@@ -306,7 +314,11 @@ func (s *listenService) Run() {
 type skuFetch struct {
 	skus    map[string]bool
 	blocked bool
+	// storeClosed 命中了预购前的商店封面页
+	storeClosed bool
 }
+
+var storeCoverRe = regexp.MustCompile(`"cv"\s*:\s*"preorder"`)
 
 // alertInStock 打开购物车并通过弹窗、系统通知、提示音、Bark 提醒
 func (s *listenService) alertInStock(hits []string) {
@@ -367,6 +379,9 @@ func (s *listenService) groupByStore(items map[string]ListenItem) skuFetch {
 		part := <-ch
 		if part.blocked {
 			result.blocked = true
+		}
+		if part.storeClosed {
+			result.storeClosed = true
 		}
 		for key, v := range part.skus {
 			result.skus[key] = v
@@ -450,6 +465,7 @@ func (s *listenService) getSkuByLink(ch chan skuFetch, skUrl string, referer str
 
 	if resp.GetStatusCode() == 541 || resp.GetStatusCode() >= 400 {
 		result.blocked = true
+		result.storeClosed = storeCoverRe.MatchString(body)
 		resetShopSession()
 		preview := body
 		if len(preview) > 160 {
