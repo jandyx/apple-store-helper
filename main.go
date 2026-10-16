@@ -19,6 +19,9 @@ import (
 	"github.com/faiface/beep/speaker"
 )
 
+// barkEnabled Bark 推送开关。官方服务 api.day.app 当前不可用，先隐藏相关界面，恢复后改为 true 即可
+const barkEnabled = false
+
 // main 主函数 (Main function)
 func main() {
 	initMP3Player()
@@ -84,13 +87,18 @@ func main() {
 
 	loadUserSettingsCache(areaWidget, storeWidget, productWidget, barkWidget, intervalWidget)
 
+	barkRow := container.New(layout.NewFormLayout(), widget.NewLabel("Bark 通知地址"), barkWidget)
+	if !barkEnabled {
+		barkRow.Hide()
+	}
+
 	// 初始化 GUI 窗口内容 (Initialize GUI)
 	view.Window.SetContent(container.NewVBox(
 		widget.NewLabel(help),
 		container.New(layout.NewFormLayout(), widget.NewLabel("选择地区:"), areaWidget),
 		container.New(layout.NewFormLayout(), widget.NewLabel("选择门店:"), storeWidget),
 		container.New(layout.NewFormLayout(), widget.NewLabel("选择型号:"), productWidget),
-		container.New(layout.NewFormLayout(), widget.NewLabel("Bark 通知地址"), barkWidget),
+		barkRow,
 		container.New(layout.NewFormLayout(), widget.NewLabel("查询频率:"), intervalWidget),
 
 		container.NewBorder(nil, nil,
@@ -146,12 +154,31 @@ func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *widget.Se
 
 // 创建动作按钮 (Create action buttons)
 func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *widget.Select, productWidget *widget.Select, barkNotifyWidget *widget.Entry, intervalWidget *widget.SelectEntry) *fyne.Container {
+	barkTestButton := widget.NewButton("测试 Bark 通知", func() {
+		services.Listen.BarkNotifyUrl = barkNotifyWidget.Text
+		go func() {
+			err := services.Listen.SendPushNotificationByBark("有货提醒（测试）", "此为测试提醒，点击通知将跳转到相关链接", services.Listen.BagURL())
+			if err != nil {
+				dialog.ShowError(fmt.Errorf("Bark 通知发送失败: %w", err), view.Window)
+				return
+			}
+			dialog.ShowInformation("Bark", "测试通知已发送，请查看手机", view.Window)
+		}()
+	})
+	if !barkEnabled {
+		barkTestButton.Hide()
+	}
+
 	return container.NewHBox(
 		widget.NewButton("添加", func() {
 			if storeWidget.Selected == "" || productWidget.Selected == "" {
 				dialog.ShowError(errors.New("请选择门店和型号"), view.Window)
 			} else {
-				services.Listen.Add(areaWidget.Selected, storeWidget.Selected, productWidget.Selected, barkNotifyWidget.Text)
+				barkNotifyUrl := ""
+				if barkEnabled {
+					barkNotifyUrl = barkNotifyWidget.Text
+				}
+				services.Listen.Add(areaWidget.Selected, storeWidget.Selected, productWidget.Selected, barkNotifyUrl)
 				services.SaveSettings(services.UserSettings{
 					SelectedArea:     areaWidget.Selected,
 					SelectedStore:    storeWidget.Selected,
@@ -172,17 +199,7 @@ func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *widget.Sele
 		widget.NewButton("测试打开购物车", func() {
 			services.Listen.OpenBag()
 		}),
-		widget.NewButton("测试 Bark 通知", func() {
-			services.Listen.BarkNotifyUrl = barkNotifyWidget.Text
-			go func() {
-				err := services.Listen.SendPushNotificationByBark("有货提醒（测试）", "此为测试提醒，点击通知将跳转到相关链接", services.Listen.BagURL())
-				if err != nil {
-					dialog.ShowError(fmt.Errorf("Bark 通知发送失败: %w", err), view.Window)
-					return
-				}
-				dialog.ShowInformation("Bark", "测试通知已发送，请查看手机", view.Window)
-			}()
-		}),
+		barkTestButton,
 	)
 }
 
