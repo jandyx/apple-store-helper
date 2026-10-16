@@ -1,7 +1,6 @@
 package services
 
 import (
-	"log"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
@@ -74,16 +73,20 @@ func warmupShopPage(pageURL, acceptLanguage string) {
 		return
 	}
 
+	started := time.Now()
+	diagnostic := queryDiagnostic{Stage: "warmup", Area: acceptLanguage, Outcome: "ok"}
+	defer func() { stockDiagnostics.record("warmup|"+pageURL, diagnostic, time.Since(started), time.Now()) }()
 	resp, err := shopHTTP().R().
 		SetHeader("accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8").
 		SetHeader("accept-language", acceptLanguage).
 		Get(pageURL)
 	if err != nil {
-		log.Println("warmup shop page failed", err)
+		diagnostic.Outcome = "network_error"
 		return
 	}
+	diagnostic.Status = resp.GetStatusCode()
 	if resp.GetStatusCode() >= 400 {
-		log.Println("warmup shop page status", resp.GetStatusCode(), pageURL)
+		diagnostic.Outcome = "http_error"
 		return
 	}
 

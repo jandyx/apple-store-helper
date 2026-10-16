@@ -9,6 +9,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"sync"
 )
 
 const (
@@ -34,22 +35,80 @@ func SetupLogging(alsoStderr bool) (string, error) {
 		return "", err
 	}
 
-	if info, err := os.Stat(path); err == nil && info.Size() >= logRotateSize {
-		if err := os.Rename(path, path+".1"); err != nil {
-			log.Println("日志轮转失败:", err)
-		}
-	}
-
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
-	if err != nil {
+	writer := &rotatingLogWriter{path: path, limit: logRotateSize}
+	if err := writer.open(); err != nil {
 		return "", err
 	}
 
 	if alsoStderr {
-		log.SetOutput(io.MultiWriter(os.Stderr, file))
+		log.SetOutput(io.MultiWriter(os.Stderr, writer))
 	} else {
-		log.SetOutput(file)
+		log.SetOutput(writer)
 	}
 	log.SetFlags(log.LstdFlags)
 	return path, nil
+}
+
+// rotatingLogWriter bounds both the current file and its one retained backup
+// during long-running monitoring, not only on application startup.
+type rotatingLogWriter struct {
+	mu    sync.Mutex
+	path  string
+	limit int64
+	file  *os.File
+	size  int64
+}
+
+func (w *rotatingLogWriter) open() error {
+	file, err := os.OpenFile(w.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		file.Close()
+		return err
+	}
+	w.file, w.size = file, info.Size()
+	return nil
+}
+func (w *rotatingLogWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	written := 0
+	for len(p) > 0 {
+		if w.file == nil {
+			if err := w.open(); err != nil {
+				return written, err
+			}
+		}
+		if w.size >= w.limit || (w.size > 0 && int64(len(p)) <= w.limit && w.size+int64(len(p)) > w.limit) {
+			if err := w.file.Close(); err != nil {
+				return written, err
+			}
+			w.file = nil
+			// Windows cannot rename over an existing destination.
+			if err := os.Remove(w.path + ".1"); err != nil && !os.IsNotExist(err) {
+				return written, err
+			}
+			if err := os.Rename(w.path, w.path+".1"); err != nil {
+				return written, err
+			}
+			if err := w.open(); err != nil {
+				return written, err
+			}
+		}
+		size := min(int64(len(p)), w.limit-w.size)
+		n, err := w.file.Write(p[:size])
+		written += n
+		w.size += int64(n)
+		p = p[n:]
+		if err != nil {
+			return written, err
+		}
+		if n == 0 {
+			return written, io.ErrShortWrite
+		}
+	}
+	return written, nil
 }

@@ -183,6 +183,34 @@ func fulfillmentAvailable(availability gjson.Result) bool {
 // fetchStock 查询一家门店的一批型号
 func fetchStock(area model.Area, storeNumber string, items []ListenItem) skuFetch {
 	result := newSkuFetch()
+	started := time.Now()
+	diagnostic := queryDiagnostic{Stage: "pickup", Area: area.Locale, Store: storeNumber, Requested: len(items), Outcome: "ok"}
+	// Include the batch identity, but never print product codes or the URL.
+	batchKey := area.Locale + "|" + storeNumber
+	for _, item := range items {
+		batchKey += "|" + item.Product.Code
+	}
+	defer func() {
+		diagnostic.Parsed = len(result.skus)
+		for _, available := range result.skus {
+			if available {
+				diagnostic.Available++
+			}
+		}
+		for _, item := range items {
+			if _, ok := result.skus[storeNumber+"."+item.Product.Code]; !ok {
+				diagnostic.Missing++
+			}
+		}
+		if diagnostic.Outcome == "ok" && diagnostic.Missing > 0 {
+			diagnostic.Outcome = "missing_requested_parts"
+		}
+		stockDiagnostics.record(batchKey, diagnostic, time.Since(started), time.Now())
+	}()
+	if len(items) == 0 {
+		diagnostic.Outcome = "empty_request"
+		return result
+	}
 	skUrl := fulfillmentURL(area, storeNumber, items)
 	referer := productBuyURL(area, items[0].Product)
 
@@ -199,42 +227,44 @@ func fetchStock(area model.Area, storeNumber string, items []ListenItem) skuFetc
 		SetHeader("sec-fetch-site", "same-origin").
 		Get(skUrl)
 	if err != nil {
-		log.Println(err)
+		diagnostic.Outcome = "network_error"
 		result.failures[storeNumber] = "网络错误"
 		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "timeout") {
 			result.failures[storeNumber] = "请求超时"
+			diagnostic.Outcome = "timeout"
 		}
 		return result
 	}
 
 	body := resp.String()
-	log.Println(resp.GetStatusCode(), skUrl)
+	diagnostic.Status = resp.GetStatusCode()
+	diagnostic.Bytes = len(body)
 
 	if resp.GetStatusCode() == 541 || resp.GetStatusCode() >= 400 {
 		result.blocked = true
+		diagnostic.Outcome = "http_error"
 		if storeCoverRe.MatchString(body) {
 			result.closed[storeNumber] = true
+			diagnostic.Outcome = "store_closed"
 		}
 		result.failures[storeNumber] = fmt.Sprintf("HTTP %d", resp.GetStatusCode())
 		resetShopSession()
-		preview := body
-		if len(preview) > 160 {
-			preview = preview[:160]
-		}
-		log.Println("fulfillment blocked", preview)
 		return result
 	}
 
+	if !gjson.Valid(body) {
+		diagnostic.Outcome = "invalid_json"
+		result.failures[storeNumber] = "响应不是有效 JSON"
+		return result
+	}
+	diagnostic.Schema = "body.stores"
 	stores := gjson.Get(body, "body.stores")
 	if !stores.Exists() || stores.Get("#").Int() == 0 {
 		stores = gjson.Get(body, "body.content.pickupMessage.stores")
+		diagnostic.Schema = "body.content.pickupMessage.stores"
 	}
 	if !stores.Exists() || stores.Get("#").Int() == 0 {
-		preview := body
-		if len(preview) > 200 {
-			preview = preview[:200]
-		}
-		log.Println("fulfillment unexpected body", preview)
+		diagnostic.Outcome = "missing_stores"
 		result.failures[storeNumber] = "响应中没有库存数据"
 		if msg := gjson.Get(body, "body.errorMessage").String(); msg != "" {
 			result.failures[storeNumber] = msg
@@ -246,7 +276,13 @@ func fetchStock(area model.Area, storeNumber string, items []ListenItem) skuFetc
 	}
 
 	for _, store := range stores.Array() {
+		if store.Get("storeNumber").String() == "" || !store.Get("partsAvailability").IsObject() {
+			diagnostic.Outcome = "invalid_store_fields"
+		}
 		for productCode, availability := range store.Get("partsAvailability").Map() {
+			if !availability.Get("pickupDisplay").Exists() && !availability.Get("messageTypes.regular.storeSelectionEnabled").Exists() && !availability.Get("messageTypes.compact.storeSelectionEnabled").Exists() {
+				diagnostic.Outcome = "missing_availability_fields"
+			}
 			uniqKey := fmt.Sprintf("%s.%s", store.Get("storeNumber").String(), productCode)
 			result.skus[uniqKey] = fulfillmentAvailable(availability)
 		}
