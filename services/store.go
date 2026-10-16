@@ -38,7 +38,7 @@ func (s *storeService) ByArea(area model.Area) []model.Store {
 					city := store.Get("address.city").String()
 					localeStores = append(localeStores, model.Store{
 						StoreNumber:   store.Get("id").String(),
-						CityStoreName: fmt.Sprintf("%s-%s", stateName, store.Get("name").String()),
+						CityStoreName: fmt.Sprintf("%s-%s", stateName, strings.TrimSpace(store.Get("name").String())),
 						Location:      strings.TrimSpace(stateName + " " + city),
 					})
 				}
@@ -48,7 +48,7 @@ func (s *storeService) ByArea(area model.Area) []model.Store {
 				city := store.Get("address.city").String()
 				localeStores = append(localeStores, model.Store{
 					StoreNumber:   store.Get("id").String(),
-					CityStoreName: fmt.Sprintf("%s-%s", city, store.Get("name").String()),
+					CityStoreName: fmt.Sprintf("%s-%s", city, strings.TrimSpace(store.Get("name").String())),
 					Location:      city,
 				})
 			}
