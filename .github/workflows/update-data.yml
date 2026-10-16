@@ -1,0 +1,106 @@
+name: Update data
+
+# 每天抓取各地区购买页与零售店列表，数据有变化时推到 auto/data-update 分支。
+# 参考 dashug/apple-store-helper 的 update-data.yml。
+on:
+  schedule:
+    # 每天 UTC 01:00（北京时间 09:00）
+    - cron: "0 1 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  refresh:
+    name: 刷新机型与门店数据
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: 检查是否出现未收录的新机型
+        id: check
+        run: |
+          set +e
+          python3 scripts/fetch_products.py --check-new > /tmp/check.log 2>&1
+          code=$?
+          set -e
+          cat /tmp/check.log
+          echo "new_models=$code" >> "$GITHUB_OUTPUT"
+          # 退出码 2 表示发现未收录的购买页，1 表示抓取出错
+          if [ "$code" = "1" ]; then
+            echo "::error::检查新机型时出错，见上方日志"
+            exit 1
+          fi
+
+      - name: 刷新机型数据
+        run: python3 scripts/fetch_products.py | tee /tmp/products.log
+
+      - name: 刷新门店数据
+        run: python3 scripts/fetch_stores.py | tee /tmp/stores.log
+
+      - name: 校验数据能被程序解析
+        run: CGO_ENABLED=0 go test -run TestDataParsesForAllAreas ./services/
+
+      - name: 推送到 auto/data-update
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          BRANCH=auto/data-update
+          BASE=${{ github.event.repository.default_branch }}
+
+          if git diff --quiet -- config/files/ && [ "${{ steps.check.outputs.new_models }}" != "2" ]; then
+            echo "机型与门店数据均无变化" | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "## 机型与门店数据有更新"
+            echo
+            echo '```'
+            git diff --stat -- config/files/
+            echo
+            cat /tmp/stores.log
+            echo '```'
+            if [ "${{ steps.check.outputs.new_models }}" = "2" ]; then
+              echo
+              echo "### 发现未收录的购买页"
+              echo
+              echo '```'
+              cat /tmp/check.log
+              echo '```'
+              echo
+              echo "要监控就加进 \`scripts/fetch_products.py\` 的 \`SLUGS\`，不需要就加进 \`IGNORED_SLUGS\`。"
+            fi
+          } > /tmp/body.md
+
+          if ! git diff --quiet -- config/files/; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git checkout -B "$BRANCH"
+            git add config/files/
+            git commit -m "更新机型与门店数据（自动抓取）"
+            git push -f origin "$BRANCH"
+          fi
+
+          cat /tmp/body.md >> "$GITHUB_STEP_SUMMARY"
+          COMPARE="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/$BASE...$BRANCH?expand=1"
+
+          # 仓库设置允许 Actions 创建 PR 时自动开 PR；不允许时在运行摘要里给出手动创建的链接
+          if gh pr list --head "$BRANCH" --state open --json number --jq 'length' | grep -q '^0$'; then
+            if ! gh pr create --base "$BASE" --head "$BRANCH" --title "Update product and store data" --body-file /tmp/body.md; then
+              echo >> "$GITHUB_STEP_SUMMARY"
+              echo "未能自动创建 PR（需在仓库 Settings → Actions → General 勾选 Allow GitHub Actions to create and approve pull requests）。手动创建：$COMPARE" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo "已有开启的 PR，分支已更新" >> "$GITHUB_STEP_SUMMARY"
+          fi
