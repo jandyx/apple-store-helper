@@ -22,7 +22,17 @@ go run main.go
 
 ### 打包
 
-#### 快速打包（推荐）
+#### 多平台（GitHub Actions）
+推送到 `main` 会自动构建 macOS (arm64)、Windows (amd64)、Linux (amd64) 三个平台，在 Actions 页面下载构建产物；推送 `v*` 标签会同时发布到 Release。
+
+#### 在 Mac 上交叉编译 Windows 版
+```shell script
+brew install mingw-w64
+CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
+  go build -ldflags "-s -w -H windowsgui" -o "Apple Store Helper.exe" .
+```
+
+#### 快速打包
 ```shell script
 # 使用打包脚本（自动处理签名问题）
 ./build.sh
