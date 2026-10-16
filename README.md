@@ -1,6 +1,8 @@
 # Apple Store 预约助手
 
-## 支持 iPhone 17 系列、iPhone 18 Pro / Pro Max、iPhone Duo
+## 支持 iPhone 17、iPhone Air、iPhone 18 Pro / Pro Max、iPhone Duo
+
+> iPhone 17 Pro / Pro Max 已被 Apple 官网下架（购买页跳转到通用「购买 iPhone」页，库存接口不再返回），已从各地区型号列表中移除。
 
 ![UI](screenshot.png)
 

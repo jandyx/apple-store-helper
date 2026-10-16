@@ -15,7 +15,7 @@ type Area struct {
  * 打开购买页面，在开发者工具 Elements 面板中搜索 productSelectionData 提取值
  * Example URLs:
  * - [iPhone 17](https://www.apple.com.cn/shop/buy-iphone/iphone-17)
- * - [iPhone 17 Pro](https://www.apple.com.cn/shop/buy-iphone/iphone-17-pro)
+ * - iPhone 17 Pro / Pro Max 已被 Apple 下架，不再提供
  * - [iPhone Air](https://www.apple.com.cn/shop/buy-iphone/iphone-air)
  * - [iPhone Duo](https://www.apple.com.cn/shop/buy-iphone/iphone-duo)
  * - [iPhone 18 Pro](https://www.apple.com.cn/shop/buy-iphone/iphone-18-pro)

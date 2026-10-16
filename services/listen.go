@@ -232,8 +232,6 @@ func familyPath(familyType string) string {
 		return "iphone-18-pro"
 	case "iphoneduo":
 		return "iphone-duo"
-	case "iphone17pro", "iphone17promax":
-		return "iphone-17-pro"
 	case "iphoneair":
 		return "iphone-air"
 	case "iphone17":
