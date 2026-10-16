@@ -129,6 +129,8 @@ CGO_ENABLED=0 go test ./services/ ./cmd/...
 
 `services` 包不依赖图形和音频库，图形版和命令行版共用；图形相关代码都在根目录的 `main.go`、`ui_*.go`、`tray.go`。
 
+开售前拿不到真实的有货响应，可以设置环境变量 `ASH_SHOP_ORIGIN` 把库存查询指向本地模拟服务，演练有货时的弹窗、通知、提示音、打开购物车和有货记录。模拟服务对 `/<地区>/shop/retail/pickup-message` 返回 `{"body":{"content":{"pickupMessage":{"stores":[{"storeNumber":"R639","partsAvailability":{"<型号>":{"pickupDisplay":"available"}}}]}}}}` 即可。
+
 在 Linux 上，需要先安装依赖：
 
 ```shell
