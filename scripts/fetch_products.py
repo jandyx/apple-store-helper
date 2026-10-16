@@ -213,6 +213,7 @@ def main():
     for locale, short in areas:
         blocks, report = [], []
         closed = False
+        incomplete = False
 
         for slug in SLUGS:
             url = f"{shop_base(short)}/shop/buy-iphone/{slug}"
@@ -223,18 +224,25 @@ def main():
                 report.append(f"{slug}: 商店维护中（预购封面页）")
                 break
             except urllib.error.HTTPError as e:
-                # 机型并非每个地区都有售，404 属正常情况
-                report.append(f"{slug}: HTTP {e.code}，跳过")
+                if e.code in (404, 410):
+                    # 机型并非每个地区都有售，404 属正常情况
+                    report.append(f"{slug}: HTTP {e.code}，该地区未发售，跳过")
+                    continue
+                # 503 / 541 等是被拦截或维护，不代表下架。数据不完整时写入会丢掉机型，必须保留原文件
+                report.append(f"{slug}: HTTP {e.code}，数据不完整")
+                incomplete = True
                 continue
             except Exception as e:
                 report.append(f"{slug}: 请求失败 {e}")
-                failed = True
+                incomplete = True
                 continue
 
             data = extract(html)
             if data is None:
+                # 页面结构变了或被拦截页顶替，既要保留原文件，也要让任务失败引起注意
                 report.append(f"{slug}: 未找到 productSelectionData")
                 failed = True
+                incomplete = True
                 continue
 
             n = len(data.get("products", []))
@@ -253,6 +261,10 @@ def main():
         if closed:
             # 维护期间数据不完整，写入会丢掉机型；保留原文件，下次再刷新
             print("  商店维护中，保留原文件")
+            continue
+
+        if incomplete:
+            print("  部分购买页没有拿到数据，保留原文件，下次再刷新")
             continue
 
         if not blocks:
