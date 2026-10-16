@@ -34,6 +34,7 @@ func main() {
 	initMP3Player()
 	initFyneApp()
 	notify.Setup()
+	setupSystemTray()
 
 	// 默认地区 (Default Area)
 	defaultArea := services.Listen.Area.Title
