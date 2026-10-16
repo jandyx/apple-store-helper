@@ -116,6 +116,7 @@ func run(opt options) error {
 	}
 
 	listen := services.Listen
+	defer listen.SetStatus(services.Pause)
 	intervalText := opt.interval
 	pushText := strings.Join(opt.push, "\n")
 
@@ -125,6 +126,10 @@ func run(opt options) error {
 			return fmt.Errorf("读取图形版配置失败（先在图形版里添加监听项）: %w", err)
 		}
 		listen.SetListenItems(settings.ListenItems, services.Area.GetArea(settings.SelectedArea))
+		if err := settings.Purchase.Validate(); err != nil {
+			return err
+		}
+		listen.SetPurchaseOptions(settings.Purchase)
 		if !flagSet("interval") && settings.IntervalMs() > 0 {
 			intervalText = fmt.Sprintf("%dms", settings.IntervalMs())
 		}
@@ -178,9 +183,9 @@ func run(opt options) error {
 	}
 
 	hit := make(chan struct{}, 1)
-	listen.OnInStock(func(items []services.ListenItem) {
+	listen.OnInStock(func(items []services.ListenItem, purchase services.PurchaseOptions) {
 		title, msg := services.HitMessage(items)
-		fmt.Printf("\a\n%s %s\n%s\n购物车：%s\n\n", now(), title, msg, services.BagURL(items[0].Area))
+		fmt.Printf("\a\n%s %s\n%s\n购买入口：%s\n\n", now(), title, msg, strings.Join(services.PurchaseLinks(items, purchase), "\n"))
 		select {
 		case hit <- struct{}{}:
 		default:

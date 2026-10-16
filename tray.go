@@ -48,9 +48,7 @@ func setupSystemTray() {
 	desk.SetSystemTrayMenu(fyne.NewMenu("Apple Store Helper",
 		fyne.NewMenuItem("显示主窗口", showMainWindow),
 		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("开始监听", func() {
-			services.Listen.SetStatus(services.Running)
-		}),
+		fyne.NewMenuItem("开始监听", startListening),
 		fyne.NewMenuItem("暂停监听", func() {
 			services.Listen.SetStatus(services.Pause)
 		}),

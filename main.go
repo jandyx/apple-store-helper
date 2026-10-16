@@ -50,6 +50,9 @@ func main() {
 	notify.Setup()
 	setupSystemTray()
 
+	defer services.Listen.SetStatus(services.Pause)
+	purchaseControls := createPurchaseControls()
+
 	// 默认地区 (Default Area)
 	defaultArea := model.Areas[0].Title
 
@@ -100,10 +103,9 @@ func main() {
 		productWidget.SetSelected(products)
 	})
 
-	help := `1. 在 Apple 官网将需要购买的型号加入购物车
-2. 选择地区、门店和型号，点击“添加”按钮加入监听列表；切换地区后可继续添加，多个地区同时监听
-3. 点击“开始”按钮开始监听，检测到有货时会自动打开购物车页面
-`
+	help := `1. 在浏览器登录 Apple 官网；首发选型号页 / 收藏页，补货可选购物车
+2. 选择地区、门店和型号，点击“添加”；切换地区后可继续添加
+3. 完成下方自检后点击“开始”；有货时提醒并打开所选入口（不自动下单）`
 
 	statusBinding := binding.NewString()
 	statusBinding.Set(services.Pause)
@@ -150,6 +152,7 @@ func main() {
 		widget.NewLabel("选择门店:"), storeWidget.Widget(),
 		widget.NewLabel("选择型号:"), productWidget.Widget(),
 		widget.NewLabel("查询频率:"), intervalWidget,
+		widget.NewLabel("有货打开:"), purchaseControls,
 		widget.NewLabel("手机推送:"), pushWidget,
 	)
 
@@ -157,7 +160,8 @@ func main() {
 		widget.NewLabel(help),
 		form,
 		container.NewBorder(nil, nil, createActionButtons(), createControlButtons(statusBinding)),
-		container.NewBorder(nil, nil, createCheckButtons(), createToolButtons()),
+		createCheckButtons(),
+		container.NewBorder(nil, nil, createToolButtons(), nil),
 		widget.NewSeparator(),
 		list.Header(),
 		banner.box,
@@ -212,6 +216,7 @@ func loadUserSettingsCache() {
 	pushWidget.SetText(settings.Pushes())
 	services.Listen.SetPushUrls(settings.Pushes())
 	keepGoingCheck.SetChecked(settings.KeepGoingOnHit)
+	loadPurchaseOptions(settings.Purchase)
 }
 
 // saveSettings 保存推送、频率与监听列表；门店和型号的勾选沿用上次「添加」时保存的值。
@@ -238,6 +243,7 @@ func saveSettingsWith(selections bool) {
 		ListenIntervalMs: services.ParseIntervalLabel(intervalWidget.Text),
 		ListenItems:      services.Listen.GetListenItems(),
 		KeepGoingOnHit:   keepGoingCheck.Checked,
+		Purchase:         currentPurchaseOptions(),
 	})
 	if err != nil {
 		log.Println("保存配置失败:", err)
@@ -277,17 +283,15 @@ func createActionButtons() *fyne.Container {
 
 // createCheckButtons 开售前自检
 func createCheckButtons() *fyne.Container {
-	return container.NewHBox(
-		widget.NewButton("试听(有货提示音)", func() {
+	return container.NewGridWithColumns(4,
+		widget.NewButton("试听提示音", func() {
 			go alertMp3()
 		}),
 		widget.NewButton("测试通知", func() {
 			// 首次发送时 macOS 会申请通知权限，开售前先点一次完成授权
 			notify.Send("有货提醒（测试）", "能看到这条横幅，说明有货时会收到系统通知")
 		}),
-		widget.NewButton("测试打开购物车", func() {
-			openBrowser(services.BagURL(services.Area.GetArea(areaWidget.Selected)))
-		}),
+		widget.NewButton("测试打开购买入口", testOpenPurchase),
 		widget.NewButton("测试手机推送", testPush),
 	)
 }
@@ -306,9 +310,13 @@ func testPush() {
 		dialog.ShowInformation("手机推送", "还没有填写推送地址。\n支持 Bark、Server酱、企业微信机器人、Telegram 和通用 Webhook，每行一个。", view.Window)
 		return
 	}
+	link, err := testPurchaseURL()
+	if err != nil {
+		dialog.ShowError(err, view.Window)
+		return
+	}
 	go func() {
-		bag := services.BagURL(services.Area.GetArea(areaWidget.Selected))
-		results := services.Listen.SendPush("有货提醒（测试）", "这是一条测试推送，有货时会以同样方式通知你", bag)
+		results := services.Listen.SendPush("有货提醒（测试）", "这是一条测试推送，有货时会以同样方式通知你", link)
 		var lines []string
 		for _, r := range results {
 			status := "成功"
@@ -346,9 +354,7 @@ func openLogDir() {
 func createControlButtons(status binding.String) *fyne.Container {
 	return container.NewHBox(
 		keepGoingCheck,
-		widget.NewButton("开始", func() {
-			services.Listen.SetStatus(services.Running)
-		}),
+		widget.NewButton("开始", startListening),
 		widget.NewButton("暂停", func() {
 			services.Listen.SetStatus(services.Pause)
 		}),

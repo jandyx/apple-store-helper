@@ -21,16 +21,10 @@ import (
 	"apple-store-helper/view"
 )
 
-// alertInStock 有货时打开购物车，并通过弹窗、系统通知、提示音提醒。手机推送与历史记录由监听服务完成
-func alertInStock(hits []services.ListenItem) {
-	// 命中跨地区时每个地区的购物车都打开
-	opened := map[string]bool{}
-	for _, hit := range hits {
-		bag := services.BagURL(hit.Area)
-		if !opened[bag] {
-			opened[bag] = true
-			openBrowser(bag)
-		}
+// alertInStock 有货时打开配置的购买入口，并通过弹窗、系统通知、提示音提醒。手机推送与历史记录由监听服务完成
+func alertInStock(hits []services.ListenItem, options services.PurchaseOptions) {
+	for _, link := range services.PurchaseLinks(hits, options) {
+		openBrowser(link)
 	}
 
 	title, msg := services.HitMessage(hits)
@@ -43,7 +37,7 @@ func alertInStock(hits []services.ListenItem) {
 
 // showHitDialog 有货弹窗：左对齐，按门店分组；内容多时可滚动
 func showHitDialog(title, msg string) {
-	label := widget.NewLabel(msg + "\n\n购物车已在浏览器中打开，请尽快选择门店和取货时间下单。")
+	label := widget.NewLabel(msg + "\n\n已尝试在浏览器打开所选购买入口，请核对型号、门店和取货时间后自行下单。")
 	label.Wrapping = fyne.TextWrapWord
 	content := fyne.CanvasObject(label)
 	if strings.Count(msg, "\n") > 12 {

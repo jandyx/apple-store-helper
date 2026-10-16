@@ -34,6 +34,7 @@ func DataDir() (string, error) {
 }
 
 type UserSettings struct {
+	Purchase         PurchaseOptions       `json:"purchase,omitempty"`
 	SelectedArea     string                `json:"selected_area"`
 	SelectedStore    string                `json:"selected_store"` // 旧版单选字段，仅用于读取兼容
 	SelectedStores   []string              `json:"selected_stores"`

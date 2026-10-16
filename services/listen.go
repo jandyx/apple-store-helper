@@ -14,6 +14,7 @@ import (
 	"github.com/golang-module/carbon"
 
 	"apple-store-helper/model"
+	"apple-store-helper/power"
 )
 
 const (
@@ -48,10 +49,11 @@ var Listen = newListenService()
 
 func newListenService() *listenService {
 	return &listenService{
-		items:      map[string]ListenItem{},
-		status:     Pause,
-		intervalMs: DefaultIntervalMs,
-		stopOnHit:  true,
+		items:        map[string]ListenItem{},
+		status:       Pause,
+		intervalMs:   DefaultIntervalMs,
+		stopOnHit:    true,
+		acquirePower: power.Acquire,
 	}
 }
 
@@ -64,14 +66,19 @@ type listenService struct {
 	// pushUrls 手机推送地址，每行一个，渠道按域名自动识别
 	pushUrls string
 	// stopOnHit 有货后暂停监听。图形界面需要（用户去下单），命令行版长期运行时关闭
-	stopOnHit bool
+	stopOnHit       bool
+	purchaseOptions PurchaseOptions
+
+	// Sleep assertion ownership follows status transitions under mu.
+	acquirePower func() (func(), error)
+	releasePower func()
 
 	// stats 最近一轮的统计，用于状态栏和警示条
 	stats RoundStats
 
 	onChange  func()
 	onStatus  func(string)
-	onInStock func([]ListenItem)
+	onInStock func([]ListenItem, PurchaseOptions)
 	onWarning func(title, msg string)
 }
 
@@ -110,8 +117,8 @@ func (s *listenService) OnStatusChange(fn func(string)) {
 	s.mu.Unlock()
 }
 
-// OnInStock 检测到有货时回调，参数为本轮全部命中项（已排序）。推送与历史记录由服务自身完成
-func (s *listenService) OnInStock(fn func([]ListenItem)) {
+// OnInStock 检测到有货时回调，参数为本轮全部命中项（已排序）及购买配置快照。推送与历史记录由服务自身完成
+func (s *listenService) OnInStock(fn func([]ListenItem, PurchaseOptions)) {
 	s.mu.Lock()
 	s.onInStock = fn
 	s.mu.Unlock()
@@ -131,6 +138,19 @@ func (s *listenService) SetStatus(status string) {
 	s.mu.Lock()
 	changed := s.status != status
 	s.status = status
+	if changed {
+		if status == Running && s.acquirePower != nil {
+			release, err := s.acquirePower()
+			if err != nil {
+				log.Printf("无法阻止系统自动睡眠（监听继续）：%v", err)
+			} else {
+				s.releasePower = release
+			}
+		} else if s.releasePower != nil {
+			s.releasePower()
+			s.releasePower = nil
+		}
+	}
 	fn := s.onStatus
 	s.mu.Unlock()
 	if changed && fn != nil {
@@ -375,6 +395,7 @@ func (s *listenService) tick() skuFetch {
 		checked = append(checked, item)
 	}
 	onInStock := s.onInStock
+	purchaseOptions := s.purchaseOptions.Normalized()
 	onWarning := s.onWarning
 	warnTitle, warnMsg := s.recordRoundLocked(checked, time.Now())
 	s.mu.Unlock()
@@ -392,10 +413,11 @@ func (s *listenService) tick() skuFetch {
 		if _, err := RecordHistory(hits, time.Now()); err != nil {
 			log.Println("记录有货历史失败:", err)
 		}
-		title, msg := HitMessage(hits)
-		go s.SendPush(title, msg+bagLinks(hits), BagURL(hits[0].Area))
+		title, _ := HitMessage(hits)
+		content, link := purchasePush(hits, purchaseOptions)
+		go s.SendPush(title, content, link)
 		if onInStock != nil {
-			onInStock(hits)
+			onInStock(hits, purchaseOptions)
 		}
 	}
 

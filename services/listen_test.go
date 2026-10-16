@@ -99,7 +99,7 @@ func TestTickStatusesAcrossAreas(t *testing.T) {
 	fake.inStock["R639.A1"] = true
 
 	var hits []ListenItem
-	s.OnInStock(func(items []ListenItem) { hits = items })
+	s.OnInStock(func(items []ListenItem, _ PurchaseOptions) { hits = items })
 	s.SetStatus(Running)
 
 	result := s.tick()
@@ -148,7 +148,7 @@ func TestContinuousModeAlertsOnlyOnTransition(t *testing.T) {
 	fake.inStock["R639.A1"] = true
 
 	alerts := 0
-	s.OnInStock(func(items []ListenItem) { alerts++ })
+	s.OnInStock(func(items []ListenItem, _ PurchaseOptions) { alerts++ })
 
 	s.tick()
 	s.tick()
