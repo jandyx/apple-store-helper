@@ -2,7 +2,9 @@ package services
 
 import (
 	"log"
+	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"sync"
 	"time"
 
@@ -13,16 +15,49 @@ var (
 	appleClientOnce sync.Once
 	appleHTTP       *req.Client
 	appleWarmMu     sync.Mutex
-	appleWarmedAt   time.Time
-	appleWarmKey    string
+	// appleWarmedAt 已预热的商品页及时间。按页面记录，多地区、多机型同时监听时不必反复预热
+	appleWarmedAt = map[string]time.Time{}
 )
+
+// resettableJar 可清空的 cookie jar。
+// req 的 ClearCookies 会直接替换客户端内部的 jar 字段，与并发中的请求构成数据竞争，
+// 这里改为在 jar 内部加锁替换。
+type resettableJar struct {
+	mu  sync.RWMutex
+	jar http.CookieJar
+}
+
+func newResettableJar() *resettableJar {
+	jar, _ := cookiejar.New(nil)
+	return &resettableJar{jar: jar}
+}
+
+func (j *resettableJar) SetCookies(u *url.URL, cookies []*http.Cookie) {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	j.jar.SetCookies(u, cookies)
+}
+
+func (j *resettableJar) Cookies(u *url.URL) []*http.Cookie {
+	j.mu.RLock()
+	defer j.mu.RUnlock()
+	return j.jar.Cookies(u)
+}
+
+func (j *resettableJar) Reset() {
+	jar, _ := cookiejar.New(nil)
+	j.mu.Lock()
+	j.jar = jar
+	j.mu.Unlock()
+}
+
+var appleJar = newResettableJar()
 
 func shopHTTP() *req.Client {
 	appleClientOnce.Do(func() {
-		jar, _ := cookiejar.New(nil)
 		appleHTTP = req.C().
 			ImpersonateChrome().
-			SetCookieJar(jar).
+			SetCookieJar(appleJar).
 			SetTimeout(12 * time.Second)
 	})
 	return appleHTTP
@@ -35,7 +70,7 @@ func warmupShopPage(pageURL, acceptLanguage string) {
 	if pageURL == "" {
 		return
 	}
-	if appleWarmKey == pageURL && time.Since(appleWarmedAt) < 20*time.Minute {
+	if warmed, ok := appleWarmedAt[pageURL]; ok && time.Since(warmed) < 20*time.Minute {
 		return
 	}
 
@@ -52,16 +87,12 @@ func warmupShopPage(pageURL, acceptLanguage string) {
 		return
 	}
 
-	appleWarmKey = pageURL
-	appleWarmedAt = time.Now()
+	appleWarmedAt[pageURL] = time.Now()
 }
 
 func resetShopSession() {
 	appleWarmMu.Lock()
 	defer appleWarmMu.Unlock()
-	appleWarmedAt = time.Time{}
-	appleWarmKey = ""
-	if appleHTTP != nil {
-		appleHTTP.ClearCookies()
-	}
+	appleWarmedAt = map[string]time.Time{}
+	appleJar.Reset()
 }
