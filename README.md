@@ -2,7 +2,7 @@
 
 监听 Apple Store 门店自提库存。有货时立即提醒，并打开购物车页面，帮你抢到想要的 iPhone。
 
-支持 macOS、Windows、Linux。下载后直接运行，不需要安装任何依赖。
+支持 macOS、Windows、Linux。下载后直接运行，不需要安装任何依赖。还有不需要桌面环境的[命令行版](#命令行版)，适合放在服务器上长期运行。
 
 ![UI](screenshot.png)
 
@@ -15,6 +15,7 @@
 | macOS（Apple 芯片） | `AppleStoreHelper-macos-arm64.zip` |
 | Windows 10 / 11（64 位） | `AppleStoreHelper-windows-amd64.zip` |
 | Linux（x86_64） | `AppleStoreHelper-linux-amd64.zip` |
+| 命令行版 | `AppleStoreHelper-cli-<系统>-<架构>.zip`，如 `cli-linux-amd64`、`cli-linux-arm64`、`cli-darwin-arm64`、`cli-windows-amd64` |
 
 ### 首次打开
 
@@ -31,6 +32,9 @@
 - **支持机型**：iPhone Duo、iPhone 18 Pro / Pro Max、iPhone 17、iPhone Air
 - **支持地区**：中国大陆、中国香港、中国台湾、新加坡、日本、澳大利亚、马来西亚
 - **门店和型号都能多选**：一次添加所选门店与型号的全部组合，并发查询
+- **多个地区同时监听**：切换地区后继续添加，列表不会清空，各地区一起查询
+- **单条停用和删除**：监听列表每一行都能临时停用或删除，不用整个清空重来
+- **有货记录**：每次有货都会记下时间、门店和型号，并统计哪家店最常放货
 - **查询频率可调**：最快 0.3 秒一次。可以从下拉框选，也可以直接输入，如 `1.5`、`800ms`
 - **有货时多重提醒**：系统通知、提示音，并自动打开购物车页面
 - **手机推送**：支持 Bark、Server酱（推到微信）、企业微信群机器人、Telegram 和通用 Webhook，可以同时填多个
@@ -51,7 +55,7 @@
 ### 开始监听
 
 1. 选择**地区**，再选**门店**（可多选）和**型号**（可多选）。
-2. 点「添加」，所选组合会出现在监听列表里。
+2. 点「添加」，所选组合会出现在监听列表里。想同时盯其他地区，切换地区后再添加即可。
 3. 选好查询频率，点「开始」。
 4. 有货时，程序会发出通知、播放提示音、自动打开购物车页面，并暂停监听。在购物车页面选择门店和取货时间，完成下单。
 5. 要继续监听，再点一次「开始」。
@@ -84,9 +88,30 @@
 | Windows | `%AppData%\apple-store-helper\user_settings.json` |
 | Linux | `~/.config/apple-store-helper/user_settings.json` |
 
-点「清空」会清掉监听列表，并删除这个文件。
+同一目录下还有有货记录 `history.json` 和运行日志 `app.log`。点程序里的「打开日志」可以直接打开这个目录，遇到问题时把 `app.log` 发出来即可排查。
 
-运行日志 `app.log` 在同一目录。点程序里的「打开日志」可以直接打开这个目录，遇到问题时把 `app.log` 发出来即可排查。
+## 命令行版
+
+不需要桌面环境，适合放在服务器、NAS 或一直开着的电脑上，配合手机推送使用。从 Releases 下载 `AppleStoreHelper-cli-*.zip`，解压后运行：
+
+```shell
+# 查看门店和型号
+./apple-store-helper-cli -list-stores -area cn -store 广东
+./apple-store-helper-cli -list-products -area cn -product "duo 夜空色"
+
+# 监听广州两家店的全部 iPhone Duo，3 秒一轮，有货推送到 Server酱
+./apple-store-helper-cli -area cn -store 天环,珠江新城 -product duo -interval 3s \
+  -push https://sctapi.ftqq.com/<SendKey>.send
+
+# 直接使用图形版保存的监听列表、查询频率和推送地址
+./apple-store-helper-cli -use-gui-config
+```
+
+- 门店可以写编号（如 `R639`）或名称关键字（如 `天环`）。型号可以写型号编号，也可以写关键字；一个参数里用空格隔开的多个关键字需要同时满足，比如 `"duo 512gb"`。
+- 默认一直监听，只在某一项**变成有货**时推送一次；加 `-stop-on-hit` 则有货后退出。
+- `-once` 只查询一轮就退出，退出码 0 表示有货，1 表示无货，2 表示查询失败，方便放进其他脚本。
+- 终端只打印状态变化，外加每分钟一行运行状态；诊断日志写在 `app.log`，加 `-v` 可同时输出到终端。
+- 所有参数见 `./apple-store-helper-cli -h`。
 
 ## 开发
 
@@ -97,8 +122,12 @@
 ### 运行
 
 ```shell
-go run .
+go run .                                 # 图形版
+go run ./cmd/apple-store-helper-cli -h   # 命令行版
+CGO_ENABLED=0 go test ./services/ ./cmd/...
 ```
+
+`services` 包不依赖图形和音频库，图形版和命令行版共用；图形相关代码都在根目录的 `main.go`、`ui_*.go`、`tray.go`。
 
 在 Linux 上，需要先安装依赖：
 
@@ -108,7 +137,7 @@ sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev
 
 ### 打包
 
-**GitHub Actions（推荐）**：推送到 `main` 时，会自动构建三个平台的安装包，可以在 Actions 页面下载。推送标签（如 `1.8.0`）时，还会自动发布 Release，程序里显示的版本号就是这个标签名。
+**GitHub Actions（推荐）**：推送到 `main` 时，会自动构建三个平台的图形版和多个平台的命令行版，可以在 Actions 页面下载。推送标签（如 `1.8.0`）时，还会自动发布 Release，程序里显示的版本号就是这个标签名。
 
 ```shell
 git tag -a 1.8.0 -m "1.8.0" && git push origin 1.8.0
@@ -128,15 +157,28 @@ CGO_ENABLED=1 GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-gcc \
   go build -ldflags "-s -w -H windowsgui" -o "Apple Store Helper.exe" .
 ```
 
-### 更新机型数据
+### 机型与门店数据
 
-机型数据在 `config/files/products_<地区>.json`，取自各地区购买页里的 `productSelectionData`。更新方法：打开购买页，在开发者工具的 Elements 面板里搜索 `productSelectionData`，把它的值复制出来。
+机型数据在 `config/files/products_<地区>.json`，取自各地区购买页里的 `productSelectionData`；门店数据在 `config/files/stores.json`，取自 Apple 零售店列表页。
 
-门店数据在 `config/files/stores.json`。
+两份数据都由脚本抓取：
+
+```shell
+python3 scripts/fetch_products.py              # 刷新全部地区的机型
+python3 scripts/fetch_products.py --check-new  # 检查是否出现未收录的新机型
+python3 scripts/fetch_stores.py --dry-run      # 只报告门店增减，不写文件
+```
+
+新机型发布后，把购买页的路径（如 `iphone-19`）加进 `scripts/fetch_products.py` 的 `SLUGS`。开售前 Apple 商店维护期间，脚本会跳过并保留原数据。
+
+### 定时任务
+
+- **Update data**：每天北京时间 9:00 运行上面两个脚本，数据有变化时推到 `auto/data-update` 分支并开 PR。需要在仓库 Settings → Actions → General 勾选「Allow GitHub Actions to create and approve pull requests」，否则只推分支，并在运行摘要里给出创建 PR 的链接。
+- **API health**：每天北京时间 9:30 用真实接口逐个地区查一次库存。接口被拦截或改版时任务会失败，GitHub 会发邮件提醒。商店维护期间不算失败。
 
 ## 更新记录
 
-- 从社区 fork [dashug/apple-store-helper](https://github.com/dashug/apple-store-helper) 引入多渠道手机推送、查询间隔随机抖动与并发上限、失败原因展示、日志文件和系统托盘。
+- 从社区 fork [dashug/apple-store-helper](https://github.com/dashug/apple-store-helper) 引入多渠道手机推送、查询间隔随机抖动与并发上限、失败原因展示、日志文件、系统托盘、多地区同时监听、单条停用和删除、有货记录、命令行版，以及每日数据更新和接口健康检查。
 
 - iPhone 17 Pro / Pro Max 已从 Apple 官网下架，已从型号列表中移除。
 - 日本的同一个型号会按运营商（SoftBank、docomo、SIM 免费版）重复出现，现在会按型号编号去重。
