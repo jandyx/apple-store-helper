@@ -23,7 +23,7 @@ go run main.go
 ### 打包
 
 #### 多平台（GitHub Actions）
-推送到 `main` 会自动构建 macOS (arm64)、Windows (amd64)、Linux (amd64) 三个平台，在 Actions 页面下载构建产物；推送 `v*` 标签会同时发布到 Release。
+推送到 `main` 会自动构建 macOS (arm64)、Windows (amd64)、Linux (amd64) 三个平台，在 Actions 页面下载构建产物；推送标签（如 `1.8.0`）会同时发布到 Release。
 
 #### 在 Mac 上交叉编译 Windows 版
 ```shell script
@@ -65,7 +65,7 @@ GOROOT 为 GO 安装目录，根据实际安装位置修改
 
 ## 使用方法
 
-1. 前往 [release](https://github.com/hteen/apple-store-helper/releases) 页面下载对应系统的程序，启动 
+1. 前往 [release](https://github.com/jandyx/apple-store-helper/releases) 页面下载对应系统的程序，启动 
 2. 在 Apple 官网将需要购买的型号加入购物车
 3. 选择地区、门店和型号，点击`添加`按钮，将需要监听的型号添加到监听列表
 4. 点击`开始`按钮开始监听，检测到有货时会自动打开购物车页面
