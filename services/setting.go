@@ -2,8 +2,27 @@ package services
 
 import (
 	"encoding/json"
+	"log"
 	"os"
+	"path/filepath"
 )
+
+const settingsFileName = "user_settings.json"
+
+// settingsPath 配置文件路径：~/Library/Application Support/apple-store-helper/user_settings.json（macOS）。
+// 双击 .app 启动时工作目录是 /，不可写，所以不能用相对路径
+func settingsPath() string {
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return settingsFileName
+	}
+	dir = filepath.Join(dir, "apple-store-helper")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		log.Println("create settings dir failed", err)
+		return settingsFileName
+	}
+	return filepath.Join(dir, settingsFileName)
+}
 
 type UserSettings struct {
 	SelectedArea     string                `json:"selected_area"`
@@ -21,13 +40,17 @@ func SaveSettings(settings UserSettings) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile("user_settings.json", data, 0644)
+	return os.WriteFile(settingsPath(), data, 0644)
 }
 
 // 加载缓存配置 LoadSettings loads settings from a file
 func LoadSettings() (UserSettings, error) {
 	var settings UserSettings
-	data, err := os.ReadFile("user_settings.json")
+	data, err := os.ReadFile(settingsPath())
+	if os.IsNotExist(err) {
+		// 兼容旧版：配置保存在当前工作目录
+		data, err = os.ReadFile(settingsFileName)
+	}
 	if err != nil {
 		return settings, err
 	}
@@ -45,5 +68,6 @@ func (s UserSettings) IntervalMs() int {
 
 // 清空缓存配置 ClearSettings removes the settings file
 func ClearSettings() error {
-	return os.Remove("user_settings.json")
+	os.Remove(settingsFileName)
+	return os.Remove(settingsPath())
 }
