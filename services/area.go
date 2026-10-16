@@ -26,8 +26,16 @@ func (s *areaService) ProductsByCode(local string) []model.Product {
 	var products []model.Product
 	productsJson := gjson.ParseBytes(config.MustReadConfigFile(fmt.Sprintf("products_%s.json", area.Locale)))
 
+	// 日本等地区同一型号号码会按运营商（SoftBank / docomo / SIM 免费版）重复出现，按型号号码去重
+	seen := map[string]bool{}
 	for _, json := range productsJson.Array() {
 		for _, result := range json.Get("products").Array() {
+			partNumber := result.Get("partNumber").String()
+			if seen[partNumber] {
+				continue
+			}
+			seen[partNumber] = true
+
 			color := json.Get(fmt.Sprintf("displayValues.dimensionColor.%s.value", result.Get("dimensionColor")))
 			products = append(products, model.Product{
 				Title: fmt.Sprintf("%s - %s - %s", result.Get("familyType"), color, result.Get("dimensionCapacity")),
