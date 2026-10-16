@@ -40,6 +40,8 @@ const (
 	// MinIntervalMs 自定义间隔下限，避免请求过密被风控
 	MinIntervalMs  = 300
 	blockedBackoff = 5 * time.Second
+	// maxPartsPerRequest Apple pickup-message 单次请求最多返回的型号数
+	maxPartsPerRequest = 20
 	// 暂停或无监听项时用短间隔检查状态，保证点击“开始”后立即生效
 	idleInterval = 200 * time.Millisecond
 )
@@ -269,15 +271,28 @@ func (s *listenService) groupByStore() skuFetch {
 		group[item.Store.StoreNumber] = append(group[item.Store.StoreNumber], item)
 	}
 
-	count := len(group)
+	// pickup-message 每次最多返回 maxPartsPerRequest 个型号，超出的分批请求
+	type batch struct {
+		storeNumber string
+		items       []ListenItem
+	}
+	var batches []batch
+	for storeNumber, items := range group {
+		for start := 0; start < len(items); start += maxPartsPerRequest {
+			end := min(start+maxPartsPerRequest, len(items))
+			batches = append(batches, batch{storeNumber, items[start:end]})
+		}
+	}
+
+	count := len(batches)
 	if count < 1 {
 		return result
 	}
 
 	ch := make(chan skuFetch, count)
-	for storeNumber, items := range group {
-		link := s.fulfillmentURL(storeNumber, items)
-		referer := productBuyURL(s.Area, items[0].Product)
+	for _, b := range batches {
+		link := s.fulfillmentURL(b.storeNumber, b.items)
+		referer := productBuyURL(s.Area, b.items[0].Product)
 		go s.getSkuByLink(ch, link, referer)
 	}
 
