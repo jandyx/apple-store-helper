@@ -180,6 +180,22 @@
             "__typename": "RgdsStore"
           },
           {
+            "id": "R792",
+            "name": "北京荟聚",
+            "slug": "livatbeijing",
+            "telephone": "400-009-6560",
+            "address": {
+              "address1": "北京市大兴区欣宁街 15 号",
+              "address2": "北京荟聚 1 层",
+              "city": "北京",
+              "postalCode": "100162",
+              "__typename": "PostalAddress",
+              "stateName": "北京",
+              "stateCode": null
+            },
+            "__typename": "RgdsStore"
+          },
+          {
             "id": "R645",
             "name": "朝阳大悦城",
             "slug": "chaoyangjoycity",
@@ -347,7 +363,7 @@
             "slug": "mixchefei",
             "telephone": "400-000-5292",
             "address": {
-              "address1": "合肥市蜀山区潜山路 111 号",
+              "address1": "合肥市蜀山区潜山路 111 号",
               "address2": "合肥万象城商场一层",
               "city": "合肥",
               "postalCode": "230031",
@@ -673,7 +689,7 @@
             "address": {
               "address1": "浙江省温州市瓯海区瓯越大道1999号",
               "address2": "温州万象城 L1层",
-              "city": "温州市",
+              "city": "温州",
               "postalCode": "325000",
               "__typename": "PostalAddress",
               "stateName": "浙江",
@@ -770,22 +786,6 @@
         "name": "辽宁",
         "store": [
           {
-            "id": "R478",
-            "name": "百年城",
-            "slug": "parkland",
-            "telephone": "400-056-0921",
-            "address": {
-              "address1": "大连市中山区解放路 19 号",
-              "address2": "",
-              "city": "大连",
-              "postalCode": "116000",
-              "__typename": "PostalAddress",
-              "stateName": "辽宁",
-              "stateCode": null
-            },
-            "__typename": "RgdsStore"
-          },
-          {
             "id": "R609",
             "name": "大连恒隆广场",
             "slug": "olympia66dalian",
@@ -877,7 +877,7 @@
             "slug": "paradisewalkchongqing",
             "telephone": "400-617-1240",
             "address": {
-              "address1": "重庆市江北区北城天街 8 号",
+              "address1": "重庆市两江新区北城天街 8 号",
               "address2": "",
               "city": "重庆",
               "postalCode": "400020",
@@ -1083,7 +1083,7 @@
             "address": {
               "address1": "浙江省温州市瓯海区瓯越大道1999号",
               "address2": "温州万象城 L1层",
-              "city": "温州市",
+              "city": "温州",
               "postalCode": "325000",
               "__typename": "PostalAddress",
               "stateName": "浙江",
@@ -1206,22 +1206,6 @@
             "__typename": "RgdsStore"
           },
           {
-            "id": "R478",
-            "name": "百年城",
-            "slug": "parkland",
-            "telephone": "400-056-0921",
-            "address": {
-              "address1": "大连市中山区解放路 19 号",
-              "address2": "",
-              "city": "大连",
-              "postalCode": "116000",
-              "__typename": "PostalAddress",
-              "stateName": "辽宁",
-              "stateCode": null
-            },
-            "__typename": "RgdsStore"
-          },
-          {
             "id": "R609",
             "name": "大连恒隆广场",
             "slug": "olympia66dalian",
@@ -1303,7 +1287,7 @@
             "slug": "paradisewalkchongqing",
             "telephone": "400-617-1240",
             "address": {
-              "address1": "重庆市江北区北城天街 8 号",
+              "address1": "重庆市两江新区北城天街 8 号",
               "address2": "",
               "city": "重庆",
               "postalCode": "400020",
@@ -1389,6 +1373,22 @@
               "address2": "",
               "city": "北京",
               "postalCode": "100032",
+              "__typename": "PostalAddress",
+              "stateName": "北京",
+              "stateCode": null
+            },
+            "__typename": "RgdsStore"
+          },
+          {
+            "id": "R792",
+            "name": "北京荟聚",
+            "slug": "livatbeijing",
+            "telephone": "400-009-6560",
+            "address": {
+              "address1": "北京市大兴区欣宁街 15 号",
+              "address2": "北京荟聚 1 层",
+              "city": "北京",
+              "postalCode": "100162",
               "__typename": "PostalAddress",
               "stateName": "北京",
               "stateCode": null
@@ -1525,7 +1525,7 @@
             "slug": "mixchefei",
             "telephone": "400-000-5292",
             "address": {
-              "address1": "合肥市蜀山区潜山路 111 号",
+              "address1": "合肥市蜀山区潜山路 111 号",
               "address2": "合肥万象城商场一层",
               "city": "合肥",
               "postalCode": "230031",
@@ -2217,8 +2217,8 @@
             "slug": "ginza",
             "telephone": "(03) 4345-3600",
             "address": {
-              "address1": "8-9-7 Ginza",
-              "address2": "",
+              "address1": "3-5-12 Ginza",
+              "address2": "Sayegusa Building",
               "city": "Chuo-ku",
               "postalCode": "104-0061",
               "__typename": "PostalAddress",
@@ -2433,8 +2433,8 @@
             "slug": "ginza",
             "telephone": "(03) 4345-3600",
             "address": {
-              "address1": "8-9-7 Ginza",
-              "address2": "",
+              "address1": "3-5-12 Ginza",
+              "address2": "Sayegusa Building",
               "city": "Chuo-ku",
               "postalCode": "104-0061",
               "__typename": "PostalAddress",
@@ -2598,22 +2598,6 @@
             "__typename": "RgdsStore"
           },
           {
-            "id": "R458",
-            "name": "Hornsby",
-            "slug": "hornsby",
-            "telephone": "(02) 8401 8800",
-            "address": {
-              "address1": "Westfield Hornsby",
-              "address2": "236 Pacific Highway",
-              "city": "Hornsby",
-              "postalCode": "2077",
-              "__typename": "PostalAddress",
-              "stateName": "New South Wales",
-              "stateCode": "NSW"
-            },
-            "__typename": "RgdsStore"
-          },
-          {
             "id": "R606",
             "name": "Miranda",
             "slug": "miranda",
@@ -2697,7 +2681,7 @@
             "id": "R253",
             "name": "Chatswood Chase",
             "slug": "chatswoodchase",
-            "telephone": "(02) 8064 6300",
+            "telephone": "(02) 8206 0500",
             "address": {
               "address1": "Chatswood Chase Sydney",
               "address2": "345 Victoria Avenue",
@@ -2990,22 +2974,6 @@
             "__typename": "RgdsStore"
           },
           {
-            "id": "R458",
-            "name": "Hornsby",
-            "slug": "hornsby",
-            "telephone": "(02) 8401 8800",
-            "address": {
-              "address1": "Westfield Hornsby",
-              "address2": "236 Pacific Highway",
-              "city": "Hornsby",
-              "postalCode": "2077",
-              "__typename": "PostalAddress",
-              "stateName": "New South Wales",
-              "stateCode": "NSW"
-            },
-            "__typename": "RgdsStore"
-          },
-          {
             "id": "R606",
             "name": "Miranda",
             "slug": "miranda",
@@ -3089,7 +3057,7 @@
             "id": "R253",
             "name": "Chatswood Chase",
             "slug": "chatswoodchase",
-            "telephone": "(02) 8064 6300",
+            "telephone": "(02) 8206 0500",
             "address": {
               "address1": "Chatswood Chase Sydney",
               "address2": "345 Victoria Avenue",
