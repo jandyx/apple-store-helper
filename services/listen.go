@@ -2,9 +2,12 @@ package services
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math/rand"
 	"net/url"
 	"regexp"
 	"sort"
@@ -46,6 +49,10 @@ const (
 	blockedBackoff = 5 * time.Second
 	// maxPartsPerRequest Apple pickup-message 单次请求最多返回的型号数
 	maxPartsPerRequest = 20
+	// maxConcurrentRequests 同时在飞的请求上限，门店多时不至于瞬间打出几十个连接
+	maxConcurrentRequests = 4
+	// jitterRatio 查询间隔叠加 ±25% 随机抖动，避免固定周期请求更容易被识别和限流（参考 dashug fork）
+	jitterRatio = 0.25
 	// 暂停或无监听项时用短间隔检查状态，保证点击“开始”后立即生效
 	idleInterval = 200 * time.Millisecond
 )
@@ -279,7 +286,11 @@ func (s *listenService) Run() {
 					status, ok := result.skus[item.Store.StoreNumber+"."+item.Product.Code]
 					switch {
 					case !ok:
-						s.updateStatusLocked(key, failedStatus)
+						status := failedStatus
+						if reason := result.failures[item.Store.StoreNumber]; reason != "" && !result.storeClosed {
+							status += "：" + reason
+						}
+						s.updateStatusLocked(key, status)
 					case status:
 						s.updateStatusLocked(key, StatusInStock)
 						hits = append(hits, fmt.Sprintf("%s %s", item.Store.CityStoreName, item.Product.Title))
@@ -300,7 +311,7 @@ func (s *listenService) Run() {
 				if result.blocked && !result.storeClosed && interval < blockedBackoff {
 					interval = blockedBackoff
 				}
-				time.Sleep(interval)
+				time.Sleep(withJitter(interval))
 				continue
 			}
 
@@ -312,6 +323,8 @@ func (s *listenService) Run() {
 type skuFetch struct {
 	skus    map[string]bool
 	blocked bool
+	// failures 查询失败的门店及原因（门店号 -> 原因），显示在监听列表里
+	failures map[string]string
 	// storeClosed 命中了预购前的商店封面页
 	storeClosed bool
 }
@@ -334,8 +347,17 @@ func (s *listenService) alertInStock(hits []string) {
 	go s.SendPush(title, msg, bagUrl)
 }
 
+// withJitter 给间隔叠加 ±jitterRatio 的随机抖动
+func withJitter(d time.Duration) time.Duration {
+	if d <= 0 {
+		return d
+	}
+	delta := float64(d) * jitterRatio
+	return time.Duration(float64(d) - delta + rand.Float64()*2*delta)
+}
+
 func (s *listenService) groupByStore(items map[string]ListenItem) skuFetch {
-	result := skuFetch{skus: map[string]bool{}}
+	result := skuFetch{skus: map[string]bool{}, failures: map[string]string{}}
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -367,10 +389,15 @@ func (s *listenService) groupByStore(items map[string]ListenItem) skuFetch {
 	}
 
 	ch := make(chan skuFetch, count)
+	sem := make(chan struct{}, maxConcurrentRequests)
 	for _, b := range batches {
 		link := s.fulfillmentURL(b.storeNumber, b.items)
 		referer := productBuyURL(s.Area, b.items[0].Product)
-		go s.getSkuByLink(ch, link, referer)
+		go func(storeNumber string) {
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			s.getSkuByLink(ch, storeNumber, link, referer)
+		}(b.storeNumber)
 	}
 
 	for i := 0; i < count; i++ {
@@ -383,6 +410,9 @@ func (s *listenService) groupByStore(items map[string]ListenItem) skuFetch {
 		}
 		for key, v := range part.skus {
 			result.skus[key] = v
+		}
+		for storeNumber, reason := range part.failures {
+			result.failures[storeNumber] = reason
 		}
 	}
 
@@ -437,8 +467,8 @@ func fulfillmentAvailable(availability gjson.Result) bool {
 	return availability.Get("messageTypes.compact.storeSelectionEnabled").Bool()
 }
 
-func (s *listenService) getSkuByLink(ch chan skuFetch, skUrl string, referer string) {
-	result := skuFetch{skus: map[string]bool{}}
+func (s *listenService) getSkuByLink(ch chan skuFetch, storeNumber string, skUrl string, referer string) {
+	result := skuFetch{skus: map[string]bool{}, failures: map[string]string{}}
 
 	warmupShopPage(referer, s.Area.AcceptLanguage())
 
@@ -454,6 +484,10 @@ func (s *listenService) getSkuByLink(ch chan skuFetch, skUrl string, referer str
 		Get(skUrl)
 	if err != nil {
 		log.Println(err)
+		result.failures[storeNumber] = "网络错误"
+		if errors.Is(err, context.DeadlineExceeded) || strings.Contains(err.Error(), "timeout") {
+			result.failures[storeNumber] = "请求超时"
+		}
 		ch <- result
 		return
 	}
@@ -464,6 +498,7 @@ func (s *listenService) getSkuByLink(ch chan skuFetch, skUrl string, referer str
 	if resp.GetStatusCode() == 541 || resp.GetStatusCode() >= 400 {
 		result.blocked = true
 		result.storeClosed = storeCoverRe.MatchString(body)
+		result.failures[storeNumber] = fmt.Sprintf("HTTP %d", resp.GetStatusCode())
 		resetShopSession()
 		preview := body
 		if len(preview) > 160 {
@@ -484,6 +519,13 @@ func (s *listenService) getSkuByLink(ch chan skuFetch, skUrl string, referer str
 			preview = preview[:200]
 		}
 		log.Println("fulfillment unexpected body", preview)
+		result.failures[storeNumber] = "响应中没有库存数据"
+		if msg := gjson.Get(body, "body.errorMessage").String(); msg != "" {
+			result.failures[storeNumber] = msg
+			if strings.Contains(msg, "no store associated") {
+				result.failures[storeNumber] = "门店编号已失效，请换一家门店"
+			}
+		}
 		ch <- result
 		return
 	}
