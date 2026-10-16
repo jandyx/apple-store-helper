@@ -31,8 +31,7 @@ func main() {
 	defaultArea := services.Listen.Area.Title
 
 	// 门店选择器 (Store Selector)
-	storeWidget := widget.NewSelect(services.Store.ByAreaTitleForOptions(defaultArea), nil)
-	storeWidget.PlaceHolder = "请选择自提门店"
+	storeWidget := newStorePicker(services.Store.ByAreaTitleForOptions(defaultArea))
 
 	// 型号选择器 (Product Selector)
 	productWidget := widget.NewSelect(services.Product.ByAreaTitleForOptions(defaultArea), nil)
@@ -68,8 +67,7 @@ func main() {
 			return
 		}
 
-		storeWidget.Options = services.Store.ByAreaTitleForOptions(value)
-		storeWidget.ClearSelected()
+		storeWidget.SetOptions(services.Store.ByAreaTitleForOptions(value))
 
 		productWidget.Options = services.Product.ByAreaTitleForOptions(value)
 		productWidget.ClearSelected()
@@ -96,7 +94,7 @@ func main() {
 	view.Window.SetContent(container.NewVBox(
 		widget.NewLabel(help),
 		container.New(layout.NewFormLayout(), widget.NewLabel("选择地区:"), areaWidget),
-		container.New(layout.NewFormLayout(), widget.NewLabel("选择门店:"), storeWidget),
+		container.New(layout.NewFormLayout(), widget.NewLabel("选择门店:"), storeWidget.Button),
 		container.New(layout.NewFormLayout(), widget.NewLabel("选择型号:"), productWidget),
 		barkRow,
 		container.New(layout.NewFormLayout(), widget.NewLabel("查询频率:"), intervalWidget),
@@ -131,7 +129,7 @@ func initFyneApp() {
 }
 
 // 加载用户设置缓存 (Load user settings cache)
-func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *widget.Select, productWidget *widget.Select, barkNotifyWidget *widget.Entry, intervalWidget *widget.SelectEntry) {
+func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *storePicker, productWidget *widget.Select, barkNotifyWidget *widget.Entry, intervalWidget *widget.SelectEntry) {
 	settings, err := services.LoadSettings()
 
 	interval := services.DefaultIntervalMs
@@ -143,7 +141,7 @@ func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *widget.Se
 
 	if err == nil {
 		areaWidget.SetSelected(settings.SelectedArea)
-		storeWidget.SetSelected(settings.SelectedStore)
+		storeWidget.SetSelected(settings.Stores())
 		productWidget.SetSelected(settings.SelectedProduct)
 		services.Listen.SetListenItems(settings.ListenItems)
 		barkNotifyWidget.SetText(settings.BarkNotifyUrl)
@@ -153,7 +151,7 @@ func loadUserSettingsCache(areaWidget *widget.RadioGroup, storeWidget *widget.Se
 }
 
 // 创建动作按钮 (Create action buttons)
-func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *widget.Select, productWidget *widget.Select, barkNotifyWidget *widget.Entry, intervalWidget *widget.SelectEntry) *fyne.Container {
+func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *storePicker, productWidget *widget.Select, barkNotifyWidget *widget.Entry, intervalWidget *widget.SelectEntry) *fyne.Container {
 	barkTestButton := widget.NewButton("测试 Bark 通知", func() {
 		services.Listen.BarkNotifyUrl = barkNotifyWidget.Text
 		go func() {
@@ -171,17 +169,19 @@ func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *widget.Sele
 
 	return container.NewHBox(
 		widget.NewButton("添加", func() {
-			if storeWidget.Selected == "" || productWidget.Selected == "" {
+			if len(storeWidget.Selected()) == 0 || productWidget.Selected == "" {
 				dialog.ShowError(errors.New("请选择门店和型号"), view.Window)
 			} else {
 				barkNotifyUrl := ""
 				if barkEnabled {
 					barkNotifyUrl = barkNotifyWidget.Text
 				}
-				services.Listen.Add(areaWidget.Selected, storeWidget.Selected, productWidget.Selected, barkNotifyUrl)
+				for _, store := range storeWidget.Selected() {
+					services.Listen.Add(areaWidget.Selected, store, productWidget.Selected, barkNotifyUrl)
+				}
 				services.SaveSettings(services.UserSettings{
 					SelectedArea:     areaWidget.Selected,
-					SelectedStore:    storeWidget.Selected,
+					SelectedStores:   storeWidget.Selected(),
 					SelectedProduct:  productWidget.Selected,
 					BarkNotifyUrl:    barkNotifyWidget.Text,
 					ListenIntervalMs: services.ParseIntervalLabel(intervalWidget.Text),

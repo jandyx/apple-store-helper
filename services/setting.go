@@ -26,7 +26,8 @@ func settingsPath() string {
 
 type UserSettings struct {
 	SelectedArea     string                `json:"selected_area"`
-	SelectedStore    string                `json:"selected_store"`
+	SelectedStore    string                `json:"selected_store"` // 旧版单选字段，仅用于读取兼容
+	SelectedStores   []string              `json:"selected_stores"`
 	SelectedProduct  string                `json:"selected_product"`
 	BarkNotifyUrl    string                `json:"bark_notify_url"`
 	ListenInterval   int                   `json:"listen_interval"` // 旧版字段（秒），仅用于读取兼容
@@ -56,6 +57,17 @@ func LoadSettings() (UserSettings, error) {
 	}
 	err = json.Unmarshal(data, &settings)
 	return settings, err
+}
+
+// Stores 已选门店，兼容旧版单选
+func (s UserSettings) Stores() []string {
+	if len(s.SelectedStores) > 0 {
+		return s.SelectedStores
+	}
+	if s.SelectedStore != "" {
+		return []string{s.SelectedStore}
+	}
+	return nil
 }
 
 // IntervalMs 查询间隔（毫秒），兼容旧版按秒保存的 listen_interval
