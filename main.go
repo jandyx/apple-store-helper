@@ -201,6 +201,10 @@ func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *multiPicker
 		widget.NewButton("试听(有货提示音)", func() {
 			go services.Listen.AlertMp3()
 		}),
+		widget.NewButton("测试通知", func() {
+			// 首次发送时 macOS 会申请通知权限，开售前先点一次完成授权
+			notify.Send("有货提醒（测试）", "能看到这条横幅，说明有货时会收到系统通知")
+		}),
 		widget.NewButton("测试打开购物车", func() {
 			services.Listen.OpenBag()
 		}),
