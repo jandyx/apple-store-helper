@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/ioutil"
 	"log"
@@ -460,17 +461,32 @@ func (s *listenService) AlertMp3() {
 	<-done
 }
 
-func (s *listenService) SendPushNotificationByBark(title string, content string, bagUrl string) {
+func (s *listenService) SendPushNotificationByBark(title string, content string, bagUrl string) error {
 
 	if len(s.BarkNotifyUrl) <= 0 {
-		return
+		return errors.New("未填写 Bark 通知地址")
 	}
 
-	apiUrl := fmt.Sprintf("%s/%s/%s?url=%s", strings.TrimRight(s.BarkNotifyUrl, "/"), title, content, bagUrl)
+	apiUrl := fmt.Sprintf(
+		"%s/%s/%s?url=%s",
+		strings.TrimRight(s.BarkNotifyUrl, "/"),
+		url.PathEscape(title),
+		url.PathEscape(content),
+		url.QueryEscape(bagUrl),
+	)
 
-	response, err := http.Get(apiUrl)
+	// 推送失败只记录日志，不能影响有货后的弹窗、提示音和打开购物袋
+	client := http.Client{Timeout: 10 * time.Second}
+	response, err := client.Get(apiUrl)
 	if err != nil {
-		panic(err)
+		log.Println("bark notify failed", err)
+		return err
 	}
 	defer response.Body.Close()
+
+	if response.StatusCode != http.StatusOK {
+		log.Println("bark notify status", response.StatusCode)
+		return fmt.Errorf("Bark 返回状态码 %d", response.StatusCode)
+	}
+	return nil
 }

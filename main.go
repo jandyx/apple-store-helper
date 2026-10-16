@@ -6,6 +6,7 @@ import (
 	"apple-store-helper/theme"
 	"apple-store-helper/view"
 	"errors"
+	"fmt"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -173,7 +174,14 @@ func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *widget.Sele
 		}),
 		widget.NewButton("测试 Bark 通知", func() {
 			services.Listen.BarkNotifyUrl = barkNotifyWidget.Text
-			services.Listen.SendPushNotificationByBark("有货提醒（测试）", "此为测试提醒，点击通知将跳转到相关链接", services.Listen.BagURL())
+			go func() {
+				err := services.Listen.SendPushNotificationByBark("有货提醒（测试）", "此为测试提醒，点击通知将跳转到相关链接", services.Listen.BagURL())
+				if err != nil {
+					dialog.ShowError(fmt.Errorf("Bark 通知发送失败: %w", err), view.Window)
+					return
+				}
+				dialog.ShowInformation("Bark", "测试通知已发送，请查看手机", view.Window)
+			}()
 		}),
 	)
 }
