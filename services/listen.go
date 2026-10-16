@@ -219,7 +219,7 @@ func (s *listenService) Run() {
 						s.UpdateStatus(key, StatusInStock)
 						s.Status.Set(Pause)
 
-						var bagUrl = fmt.Sprintf("%s/shop/bag", s.Area.ShopOrigin())
+						var bagUrl = s.BagURL()
 						s.openBrowser(bagUrl)
 						msg := fmt.Sprintf("%s %s 有货", item.Store.CityStoreName, item.Product.Title)
 						dialog.ShowInformation("匹配成功", msg, view.Window)
@@ -420,6 +420,16 @@ func (s *listenService) getSkuByLink(ch chan skuFetch, skUrl string, referer str
 //		t,
 //	)
 //}
+
+// BagURL 当前地区购物袋地址
+func (s *listenService) BagURL() string {
+	return fmt.Sprintf("%s/shop/bag", s.Area.ShopOrigin())
+}
+
+// OpenBag 用默认浏览器打开当前地区购物袋，与有货时的行为一致
+func (s *listenService) OpenBag() {
+	s.openBrowser(s.BagURL())
+}
 
 func (s *listenService) openBrowser(link string) {
 	parse, err := url.Parse(link)

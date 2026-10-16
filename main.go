@@ -168,9 +168,12 @@ func createActionButtons(areaWidget *widget.RadioGroup, storeWidget *widget.Sele
 		widget.NewButton("试听(有货提示音)", func() {
 			go services.Listen.AlertMp3()
 		}),
+		widget.NewButton("测试打开购物车", func() {
+			services.Listen.OpenBag()
+		}),
 		widget.NewButton("测试 Bark 通知", func() {
 			services.Listen.BarkNotifyUrl = barkNotifyWidget.Text
-			services.Listen.SendPushNotificationByBark("有货提醒（测试）", "此为测试提醒，点击通知将跳转到相关链接", "https://www.apple.com.cn/shop/bag")
+			services.Listen.SendPushNotificationByBark("有货提醒（测试）", "此为测试提醒，点击通知将跳转到相关链接", services.Listen.BagURL())
 		}),
 	)
 }
