@@ -142,7 +142,11 @@ go vet ./...
 sudo apt-get install -y libgl1-mesa-dev xorg-dev libasound2-dev
 ```
 
-### API 自提下单（实验性）
+### 自提请求链排查（实验性）
+
+`node scripts/purchase_probe.cjs` 可用独立 Chrome 会话观察购买请求，并通过同一会话直接验证已观察到的只读 JSON 接口。
+需要单独提供 Playwright，不影响现有 Go 程序的运行依赖。工具不回放加购、结账、提交订单或付款，也尚未接入有货通知。
+使用方式、已验证范围与当前阻塞见[自提请求链调查](docs/purchase-request-investigation.md)。离线检查：`node --test scripts/purchase_probe.test.cjs`。
 
 现有监听器的 API 下单配置、默认关闭/演练/提交模式、防重复策略与未完成验收项，见[API 自提下单说明](docs/api-auto-order.md)。不使用浏览器点击回放。
 
