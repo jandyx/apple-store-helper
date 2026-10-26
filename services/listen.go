@@ -76,10 +76,12 @@ type listenService struct {
 	// stats 最近一轮的统计，用于状态栏和警示条
 	stats RoundStats
 
-	onChange  func()
-	onStatus  func(string)
-	onInStock func([]ListenItem, PurchaseOptions)
-	onWarning func(title, msg string)
+	onChange    func()
+	onStatus    func(string)
+	onInStock   func([]ListenItem, PurchaseOptions)
+	onWarning   func(title, msg string)
+	autoOrder   *autoOrderCoordinator
+	onAutoOrder func(AutoOrderEvent)
 }
 
 type ListenItem struct {
@@ -366,6 +368,7 @@ func (s *listenService) tick() skuFetch {
 	var hits, checked []ListenItem
 	s.mu.Lock()
 	stopOnHit := s.stopOnHit
+	autoOrder := s.autoOrder
 	for _, row := range s.rowsLocked() {
 		item := row.Item
 		if item.Disabled {
@@ -384,7 +387,7 @@ func (s *listenService) tick() skuFetch {
 		case available:
 			item.Status = StatusInStock
 			// 持续监听时只在「变成有货」那一刻提醒，否则每轮都会重复推送
-			if stopOnHit || previous != StatusInStock {
+			if (stopOnHit && (autoOrder == nil || autoOrder.matches(item))) || previous != StatusInStock {
 				hits = append(hits, item)
 			}
 		default:
@@ -407,7 +410,12 @@ func (s *listenService) tick() skuFetch {
 	}
 
 	if len(hits) > 0 {
-		if stopOnHit {
+		if stopOnHit && (autoOrder == nil || autoOrder.handles(hits)) {
+			s.SetStatus(Pause)
+		}
+		// Start from the same immutable inventory result as reminders, not a second
+		// independent polling loop. The arm consumes at most one matching hit.
+		if autoOrder.tryStart(hits) {
 			s.SetStatus(Pause)
 		}
 		if _, err := RecordHistory(hits, time.Now()); err != nil {

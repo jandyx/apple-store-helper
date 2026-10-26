@@ -15,6 +15,8 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -26,6 +28,7 @@ import (
 	"syscall"
 	"time"
 
+	"apple-store-helper/checkout"
 	"apple-store-helper/common"
 	"apple-store-helper/model"
 	"apple-store-helper/services"
@@ -46,18 +49,24 @@ func (m *multiFlag) Set(v string) error {
 }
 
 type options struct {
-	area         string
-	stores       multiFlag
-	products     multiFlag
-	push         multiFlag
-	interval     string
-	useGUIConfig bool
-	once         bool
-	stopOnHit    bool
-	listStores   bool
-	listProducts bool
-	verbose      bool
-	version      bool
+	area                string
+	stores              multiFlag
+	products            multiFlag
+	push                multiFlag
+	interval            string
+	useGUIConfig        bool
+	once                bool
+	stopOnHit           bool
+	listStores          bool
+	listProducts        bool
+	verbose             bool
+	version             bool
+	autoOrderConfig     string
+	autoOrderMode       string
+	checkOrderSession   string
+	prepareOrderSession string
+	prepareOrderSKU     string
+	prepareOrderCap     int64
 }
 
 func main() {
@@ -74,6 +83,12 @@ func main() {
 	flag.BoolVar(&opt.listProducts, "list-products", false, "列出地区的型号并退出（可配合 -product 过滤）")
 	flag.BoolVar(&opt.verbose, "v", false, "同时把诊断日志输出到终端")
 	flag.BoolVar(&opt.version, "version", false, "显示版本")
+	flag.StringVar(&opt.autoOrderConfig, "auto-order-config", "", "私有 API 下单配置 JSON 路径（不会读取浏览器数据库）")
+	flag.StringVar(&opt.autoOrderMode, "auto-order-mode", services.AutoOrderOff, "API 模式：off（默认）/ review（会进入结账但不提交）/ submit（创建真实订单，不付款）")
+	flag.StringVar(&opt.checkOrderSession, "check-order-session", "", "只读检查私有会话 JSON 能否读取购物袋；不检查库存，不加购、不结账、不下单")
+	flag.StringVar(&opt.prepareOrderSession, "prepare-order-session", "", "协议诊断：会话 JSON 路径；只请求进入现有单件购物袋的结账会话，不选店、不提交、不付款")
+	flag.StringVar(&opt.prepareOrderSKU, "prepare-order-sku", "", "协议诊断的精确 SKU（必须与现有单件购物袋相同）")
+	flag.Int64Var(&opt.prepareOrderCap, "prepare-order-cap-cents", 0, "协议诊断的金额上限，单位分；必须显式给出")
 	flag.Usage = func() {
 		fmt.Fprintf(flag.CommandLine.Output(), "Apple Store Helper 命令行版 %s\n\n用法：apple-store-helper-cli [参数]\n\n", common.VERSION)
 		flag.PrintDefaults()
@@ -97,6 +112,29 @@ func main() {
 }
 
 func run(opt options) error {
+	if opt.checkOrderSession != "" && opt.prepareOrderSession != "" {
+		return errors.New("只读自检与进入结账诊断不能同时运行")
+	}
+	if opt.prepareOrderSession != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		result, err := checkout.PrepareCheckoutSession(ctx, opt.prepareOrderSession, opt.prepareOrderSKU, opt.prepareOrderCap)
+		if err != nil {
+			return fmt.Errorf("进入结账诊断已停止（未提交订单）：%w", err)
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	}
+	if opt.checkOrderSession != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		result, err := checkout.ProbeSession(ctx, opt.checkOrderSession)
+		if err != nil {
+			// checkout errors are deliberately fixed/redacted; preserve that useful
+			// cause rather than hiding HTTP/schema/session failures behind one line.
+			return fmt.Errorf("Apple 会话只读自检失败（未尝试下单）：%w", err)
+		}
+		return json.NewEncoder(os.Stdout).Encode(result)
+	}
 	area, err := resolveArea(opt.area)
 	if err != nil {
 		return err
@@ -116,7 +154,13 @@ func run(opt options) error {
 	}
 
 	listen := services.Listen
-	defer listen.SetStatus(services.Pause)
+	defer func() {
+		listen.CancelAutoOrder()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = listen.WaitAutoOrder(ctx)
+		listen.SetStatus(services.Pause)
+	}()
 	intervalText := opt.interval
 	pushText := strings.Join(opt.push, "\n")
 
@@ -130,6 +174,9 @@ func run(opt options) error {
 			return err
 		}
 		listen.SetPurchaseOptions(settings.Purchase)
+		if opt.autoOrderConfig == "" {
+			opt.autoOrderConfig = settings.AutoOrder.ConfigPath
+		}
 		if !flagSet("interval") && settings.IntervalMs() > 0 {
 			intervalText = fmt.Sprintf("%dms", settings.IntervalMs())
 		}
@@ -169,6 +216,14 @@ func run(opt options) error {
 	listen.SetIntervalMs(ms)
 	listen.SetPushUrls(pushText)
 	listen.SetStopOnHit(opt.stopOnHit)
+	autoOptions := services.AutoOrderOptions{ConfigPath: opt.autoOrderConfig, Mode: opt.autoOrderMode}.Normalized()
+	if err := validateAutoOrderInvocation(opt.once, autoOptions); err != nil {
+		return err
+	}
+	if err := listen.ConfigureAutoOrder(autoOptions); err != nil {
+		return err
+	}
+	orderEnabled := autoOptions.Mode != services.AutoOrderOff
 
 	fmt.Printf("监听 %d 项（启用 %d），每 %s 查询一轮，手机推送 %d 个地址\n",
 		total, active, time.Duration(ms)*time.Millisecond, len(services.SplitPushTargets(pushText)))
@@ -183,9 +238,20 @@ func run(opt options) error {
 	}
 
 	hit := make(chan struct{}, 1)
+	orderCompleted := make(chan struct{}, 1)
+	listen.OnAutoOrder(func(event services.AutoOrderEvent) {
+		fmt.Printf("\n%s API 下单：%s\n型号：%s 门店：%s 阶段：%s\n", now(), event.Message, event.SKU, event.StoreID, event.Stage)
+		select {
+		case orderCompleted <- struct{}{}:
+		default:
+		}
+	})
 	listen.OnInStock(func(items []services.ListenItem, purchase services.PurchaseOptions) {
 		title, msg := services.HitMessage(items)
 		fmt.Printf("\a\n%s %s\n%s\n购买入口：%s\n\n", now(), title, msg, strings.Join(services.PurchaseLinks(items, purchase), "\n"))
+		if orderEnabled && !listen.AutoOrderHandles(items) {
+			return
+		}
 		select {
 		case hit <- struct{}{}:
 		default:
@@ -210,12 +276,55 @@ func run(opt options) error {
 			return nil
 		case <-hit:
 			if opt.stopOnHit {
-				// 等推送发出去再退出
-				time.Sleep(3 * time.Second)
+				if err := waitForOrderAndPush(listen, stop); err != nil {
+					return err
+				}
 				return nil
 			}
+		case <-orderCompleted:
+			if err := waitForOrderAndPush(listen, stop); err != nil {
+				return err
+			}
+			return nil
 		}
 	}
+}
+
+func validateAutoOrderInvocation(once bool, options services.AutoOrderOptions) error {
+	if once && options.Normalized().Mode != services.AutoOrderOff {
+		return errors.New("-once 仅用于库存查询，不能与 API 下单模式同时使用")
+	}
+	return options.Validate()
+}
+
+type orderWaiter interface {
+	WaitAutoOrder(context.Context) error
+	CancelAutoOrder()
+}
+
+func waitForOrderAndPush(waiter orderWaiter, stop <-chan os.Signal) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute+5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- waiter.WaitAutoOrder(ctx) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			waiter.CancelAutoOrder()
+			return errors.New("API 下单等待超时；请先核对 Apple 订单记录")
+		}
+	case <-stop:
+		waiter.CancelAutoOrder()
+		return nil
+	}
+	// Preserve the existing push-delivery grace period, but remain interruptible.
+	timer := time.NewTimer(3 * time.Second)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+	case <-stop:
+	}
+	return nil
 }
 
 // flagSet 命令行是否显式传了某个参数
