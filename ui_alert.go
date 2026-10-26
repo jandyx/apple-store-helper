@@ -23,21 +23,27 @@ import (
 
 // alertInStock 有货时打开配置的购买入口，并通过弹窗、系统通知、提示音提醒。手机推送与历史记录由监听服务完成
 func alertInStock(hits []services.ListenItem, options services.PurchaseOptions) {
-	for _, link := range services.PurchaseLinks(hits, options) {
-		openBrowser(link)
+	if !services.Listen.AutoOrderHandles(hits) {
+		for _, link := range services.PurchaseLinks(hits, options) {
+			openBrowser(link)
+		}
 	}
 
 	title, msg := services.HitMessage(hits)
 	// 窗口可能收在托盘里，先显示出来
 	showMainWindow()
-	showHitDialog(title, msg)
+	if services.Listen.AutoOrderHandles(hits) {
+		showHitDialog(title, msg+"\n\n本次命中已交给一次性 API 下单流程；请勿同时操作该购物袋。结果会单独提示。")
+	} else {
+		showHitDialog(title, msg+"\n\n已尝试在浏览器打开所选购买入口，请核对型号、门店和取货时间后自行下单。")
+	}
 	notify.Send(title, msg)
 	go alertMp3()
 }
 
 // showHitDialog 有货弹窗：左对齐，按门店分组；内容多时可滚动
 func showHitDialog(title, msg string) {
-	label := widget.NewLabel(msg + "\n\n已尝试在浏览器打开所选购买入口，请核对型号、门店和取货时间后自行下单。")
+	label := widget.NewLabel(msg)
 	label.Wrapping = fyne.TextWrapWord
 	content := fyne.CanvasObject(label)
 	if strings.Count(msg, "\n") > 12 {

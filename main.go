@@ -50,7 +50,7 @@ func main() {
 	notify.Setup()
 	setupSystemTray()
 
-	defer services.Listen.SetStatus(services.Pause)
+	defer stopOrderAndListening()
 	purchaseControls := createPurchaseControls()
 
 	// 默认地区 (Default Area)
@@ -105,7 +105,7 @@ func main() {
 
 	help := `1. 在浏览器登录 Apple 官网；首发选型号页 / 收藏页，补货可选购物车
 2. 选择地区、门店和型号，点击“添加”；切换地区后可继续添加
-3. 完成下方自检后点击“开始”；有货时提醒并打开所选入口（不自动下单）`
+3. 完成下方自检后点击“开始”；默认仅提醒，实验性 API 模式需单独配置并明确武装`
 
 	statusBinding := binding.NewString()
 	statusBinding.Set(services.Pause)
@@ -113,6 +113,7 @@ func main() {
 		statusBinding.Set(status)
 	})
 	services.Listen.OnInStock(alertInStock)
+	services.Listen.OnAutoOrder(alertAutoOrder)
 	// 被拦截告警弹窗：查询恢复正常后自动关闭，避免过期的提示让人误以为仍被拦截
 	var warningDialog dialog.Dialog
 	services.Listen.OnWarning(func(title, msg string) {
@@ -217,6 +218,7 @@ func loadUserSettingsCache() {
 	services.Listen.SetPushUrls(settings.Pushes())
 	keepGoingCheck.SetChecked(settings.KeepGoingOnHit)
 	loadPurchaseOptions(settings.Purchase)
+	loadAutoOrderOptions(settings.AutoOrder)
 }
 
 // saveSettings 保存推送、频率与监听列表；门店和型号的勾选沿用上次「添加」时保存的值。
@@ -244,6 +246,7 @@ func saveSettingsWith(selections bool) {
 		ListenItems:      services.Listen.GetListenItems(),
 		KeepGoingOnHit:   keepGoingCheck.Checked,
 		Purchase:         currentPurchaseOptions(),
+		AutoOrder:        currentAutoOrderOptions(),
 	})
 	if err != nil {
 		log.Println("保存配置失败:", err)

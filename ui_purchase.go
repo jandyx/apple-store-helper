@@ -46,7 +46,7 @@ func createPurchaseControls() fyne.CanvasObject {
 		saveSettings()
 	}
 	purchaseMode.SetSelectedIndex(0)
-	return container.NewVBox(purchaseMode, favoritesURL)
+	return container.NewVBox(purchaseMode, favoritesURL, createAutoOrderControls())
 }
 
 func loadPurchaseOptions(options services.PurchaseOptions) {
@@ -91,7 +91,16 @@ func startListening() {
 		dialog.ShowError(err, view.Window)
 		return
 	}
-	services.Listen.SetStatus(services.Running)
+	options := currentAutoOrderOptions()
+	if err := options.Validate(); err != nil {
+		dialog.ShowError(err, view.Window)
+		return
+	}
+	if options.Mode == "submit" {
+		confirmAutoOrderStart(options)
+		return
+	}
+	beginListening(options)
 }
 
 // Do not change an active monitor's destination while a custom URL is incomplete.
